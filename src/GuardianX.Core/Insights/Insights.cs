@@ -14,6 +14,18 @@ public sealed record StressReport(int Score, string Level, double HoursAtFull, d
 
 public sealed record SleepReport(DateTimeOffset Start, DateTimeOffset End, double PercentLost, double PercentPerHour, bool Unusual);
 
+/// <summary>What the numbers point to next: when health reaches 80%, and how long until empty, full or the charge limit.</summary>
+public sealed record BatteryForecast(
+    double HealthNow,
+    double? LossPerMonth,
+    DateOnly? HealthAt80On,      // null when health is already below 80% or there is no clear downward trend
+    double? MonthsTo80,
+    double? HoursToEmpty,        // on battery, at the current rate
+    double? HoursToFull,         // charging, with the slower top-off above 80%
+    double? HoursToLimit,        // charging, until the mode's charge limit
+    double? PercentAtNight,      // on battery: expected charge at 11 pm at the current rate
+    string Basis);
+
 public enum TipLevel { Good, Info, Warn, Alert }
 
 public sealed record Tip(TipLevel Level, string Title, string Body);
@@ -190,6 +202,61 @@ public static class BatteryInsights
             tips.Add(new Tip(TipLevel.Good, "Nothing to fix right now",
                 "Your battery isn't under stress today. Guardian X keeps watching and will tell you when something changes."));
         return tips;
+    }
+
+    /// <summary>
+    /// Forecasts from the measured trend and the live rate. Above 80% a lithium battery charges at constant voltage
+    /// and the current tapers, so that part is assumed to go at about half the measured rate.
+    /// </summary>
+    public static BatteryForecast Forecast(WearReport wear, Battery.BatterySnapshot? s, int chargeLimit, DateTimeOffset now)
+    {
+        DateOnly? at80 = null;
+        double? months = null;
+        if (wear.WearPerMonth is double perMonth && perMonth > 0.05 && wear.HealthPercent > 80)
+        {
+            months = Math.Round((wear.HealthPercent - 80) / perMonth, 1);
+            at80 = DateOnly.FromDateTime(now.Date.AddDays(months.Value * 30.44));
+        }
+
+        double? toEmpty = null, toFull = null, toLimit = null, atNight = null;
+        if (s is { FullMWh: > 0, RateMw: int rate } && rate != 0)
+        {
+            double full = s.FullMWh, rem = s.RemainingMWh;
+            if (rate < 0)
+            {
+                toEmpty = rem / -rate;
+                var night = new DateTimeOffset(now.Date.AddHours(23), now.Offset);
+                if (now < night)
+                    atNight = Math.Max(0, Math.Round(s.Percent - (-rate) * (night - now).TotalHours / full * 100));
+            }
+            else
+            {
+                double Hours(double targetFraction)
+                {
+                    double target = targetFraction * full;
+                    if (rem >= target) return 0;
+                    double knee = 0.8 * full, h = 0;
+                    if (rem < knee) h += (Math.Min(target, knee) - rem) / rate;
+                    if (target > knee) h += (target - Math.Max(rem, knee)) / (rate * 0.5);
+                    return h;
+                }
+                toFull = Hours(1.0);
+                if (chargeLimit < 100 && s.Percent < chargeLimit) toLimit = Hours(chargeLimit / 100.0);
+            }
+        }
+        string basis = wear.WearPerMonth is null
+            ? "Not enough history for a health trend yet (needs 14 days)."
+            : $"Health trend measured over {wear.TrendDays} days; live times use the current {(s?.RateMw is int r ? Math.Abs(r) / 1000.0 : 0):0.0} W.";
+        return new BatteryForecast(wear.HealthPercent, wear.WearPerMonth, at80, months,
+            Round(toEmpty), Round(toFull), Round(toLimit), atNight, basis);
+
+        static double? Round(double? h) => h is double v ? Math.Round(v, 2) : null;
+    }
+
+    public static string FormatHours(double hours)
+    {
+        int m = (int)Math.Round(hours * 60);
+        return m >= 60 ? $"{m / 60} h {m % 60:00} min" : $"{Math.Max(1, m)} min";
     }
 
     public static string FormatMinutes(int minutes) =>

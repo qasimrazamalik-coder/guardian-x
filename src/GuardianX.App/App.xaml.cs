@@ -18,6 +18,9 @@ public partial class App : Application
     private EventWaitHandle? _showSignal;
     private DateTimeOffset _mutedUntil = DateTimeOffset.MinValue;
     private bool _toldAboutTray;
+    private MiniWidget? _widget;
+    private Forms.ToolStripMenuItem? _widgetItem;
+    private string? _pendingReport;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -37,6 +40,7 @@ public partial class App : Application
         var settings = Settings.Load();
         Monitor = new GuardianMonitor(new Store(), settings, new DgpuWatcher());
         Monitor.Alerted += a => Dispatcher.BeginInvoke(() => Notify(a));
+        Monitor.WeeklyReportReady += path => _pendingReport = path;
         if (settings.StartWithWindows && !StartupRegistration.IsRegistered())
         {
             try { StartupRegistration.Apply(true); } catch (Exception ex) { Log("Startup: " + ex.Message); }
@@ -53,6 +57,7 @@ public partial class App : Application
 
         Monitor.Start();
         if (!StartHidden) ShowWindow();
+        if (settings.WidgetOn) ShowWidget(true);
     }
 
     private void CreateTray()
@@ -66,11 +71,22 @@ public partial class App : Application
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
         _tray.ContextMenuStrip.Items.Add("Open Guardian X", null, (_, _) => ShowWindow());
+        _widgetItem = new Forms.ToolStripMenuItem("Mini widget") { CheckOnClick = true, Checked = Monitor.Settings.WidgetOn };
+        _widgetItem.Click += (_, _) => SetWidgetFromUser(_widgetItem.Checked);
+        _tray.ContextMenuStrip.Items.Add(_widgetItem);
         _tray.ContextMenuStrip.Items.Add("Mute alerts for 1 hour", null, (_, _) => _mutedUntil = DateTimeOffset.Now.AddHours(1));
         _tray.ContextMenuStrip.Items.Add(new Forms.ToolStripSeparator());
         _tray.ContextMenuStrip.Items.Add("Quit", null, (_, _) => Quit());
         _tray.MouseClick += (_, a) => { if (a.Button == Forms.MouseButtons.Left) ShowWindow(); };
-        _tray.BalloonTipClicked += (_, _) => ShowWindow();
+        _tray.BalloonTipClicked += (_, _) =>
+        {
+            if (_pendingReport is string report && File.Exists(report))
+            {
+                _pendingReport = null;
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(report) { UseShellExecute = true }); return; } catch { }
+            }
+            ShowWindow();
+        };
         Monitor.Updated += s => Dispatcher.BeginInvoke(() =>
         {
             var text = $"Guardian X · {s.Percent:0}% · health {s.HealthPercent:0.0}%";
@@ -116,8 +132,33 @@ public partial class App : Application
         _window.Activate();
     }
 
+    /// <summary>Shows or hides the mini widget (called on the UI thread).</summary>
+    public void ShowWidget(bool on)
+    {
+        if (on)
+        {
+            if (_widget is null)
+            {
+                _widget = new MiniWidget(Monitor);
+                _widget.Closed += (_, _) => _widget = null;
+            }
+            _widget.Show();
+        }
+        else { _widget?.Close(); _widget = null; }
+        if (_widgetItem is not null) _widgetItem.Checked = on;
+    }
+
+    /// <summary>Widget switched from the tray or its own menu: remember the choice.</summary>
+    public void SetWidgetFromUser(bool on)
+    {
+        Monitor.Settings.WidgetOn = on;
+        Monitor.Settings.Save();
+        ShowWidget(on);
+    }
+
     public void Quit()
     {
+        _widget?.Close();
         SystemEvents.PowerModeChanged -= OnPowerMode;
         _tray.Visible = false;
         _tray.Dispose();

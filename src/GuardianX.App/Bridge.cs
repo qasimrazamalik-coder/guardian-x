@@ -25,11 +25,9 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         // Enums (power overlay, tip level) reach the interface as names, not numbers.
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
-    private readonly Ollama _ollama = new();
-    private GuardianAssistant? _assistant;
-    private GuardianAssistant Assistant => _assistant ??= new GuardianAssistant(monitor.Store, _ollama);
+    private readonly LocalAssistant _assistant = new();
     private CancellationTokenSource? _chatCts;
-    private bool _setupRunning;
+    private List<BigFile>? _bigFiles;
 
     public static string Version => typeof(Bridge).Assembly.GetName().Version?.ToString(3) ?? "2.0.0";
 
@@ -73,10 +71,21 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         "settingsGet" => Run(() => SettingsView()),
         "settingsSave" => Run(() => { SaveSettings(p!); return Ok(); }),
         "playSound" => Run(() => { Sounds.Play(Enum.Parse<Cue>(p!["cue"]!.GetValue<string>(), true), monitor.Settings.SoundPack); return Ok(); }),
-        "assistantStatus" => AssistantStatusAsync(),
-        "assistantSetup" => Run(() => { _ = SetupAssistantAsync(); return Ok(); }),
-        "assistantReset" => Run(() => { Assistant.History.Clear(); return Ok(); }),
+        "assistantStatus" => Run(() => new { ready = true, engine = "local", sections = _assistant.Chunks.Count }),
+        "assistantReset" => Run(() => { _assistant.Reset(); return Ok(); }),
         "ask" => Run(() => { _ = AskAsync(p!["id"]!.GetValue<long>(), p["question"]!.GetValue<string>()); return Ok(); }),
+        "setEfficiency" => Run(() => SetEfficiency(p!["app"]!.GetValue<string>(), p["on"]!.GetValue<bool>())),
+        "tempScan" => Run(() => (object)Cleanup.ScanTemp()),
+        "tempClean" => Run(CleanTemp),
+        "emptyRecycleBin" => Run(EmptyRecycleBin),
+        "bigFiles" => Run(() => (object)(_bigFiles = Cleanup.FindBigFiles())),
+        "showFile" => Run(() => { ShowFile(p!["path"]!.GetValue<string>()); return Ok(); }),
+        "startupList" => Run(() => (object)Cleanup.StartupApps()),
+        "startupSet" => Run(() => { Cleanup.SetStartup(p!["id"]!.GetValue<string>(), p["enabled"]!.GetValue<bool>()); return Cleanup.StartupApps(); }),
+        "weeklyReport" => Run(WeeklyReportNow),
+        "reportsList" => Run(ReportsList),
+        "openReport" => Run(() => { OpenReport(p!["name"]!.GetValue<string>()); return Ok(); }),
+        "widgetSet" => Run(() => { SetWidget(p!["on"]!.GetValue<bool>()); return Ok(); }),
         "mcpInfo" => Run(() => (object)McpSetup.Info()),
         "mcpConnect" => Run(() => { McpSetup.Connect(); return McpSetup.Info(); }),
         "exportCsv" => Run(ExportCsv),
@@ -136,6 +145,8 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
             plug,
             chargeLimitOn = settings.ChargeLimitOn,
             chargeToFull = monitor.ChargeToFull,
+            forecast = wear is null ? null : BatteryInsights.Forecast(wear, s, settings.ChargeLimitOn ? Modes.Get(settings.Mode).ChargeLimit : 100, now),
+            auto = new { last = monitor.LastAutoAction, gaming = monitor.GamingDetected, quiet = settings.IsQuiet(DateTime.Now) },
             error = monitor.LastError,
             version = Version,
         };
@@ -176,6 +187,7 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
             trendPerMonth = wear?.WearPerMonth,
             biggestDrop = drop is { } x ? new { from = x.From.ToString("yyyy-MM-dd"), to = x.To.ToString("yyyy-MM-dd"), lost = x.Lost } : null,
             chargerHours = BatteryInsights.ChargerHoursPerDay(store.ReportPeriods()),
+            forecast = wear is null ? null : BatteryInsights.Forecast(wear, null, 100, now),
             days,
             gpuWeek = store.GpuHolders(now.AddDays(-7)).Select(g => new { app = g.App, times = g.Times }),
         };
@@ -216,7 +228,13 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         double cpu = Math.Min(100, list.Sum(a => a.CpuPercent));
         return new
         {
-            apps = list.Take(60),
+            apps = list.Take(60).Select(a => new
+            {
+                a.Key, a.Name, a.Processes, a.MemoryMb, a.CpuPercent, a.DiskMbPerSec, a.EstimatedWatts, a.Kind,
+                efficiency = monitor.Settings.EfficiencyApps.Contains(a.Key, StringComparer.OrdinalIgnoreCase),
+                canThrottle = EfficiencyMode.Allowed(a.Key) && a.Kind != "system",
+            }),
+            autoEfficiency = monitor.Settings.AutoEfficiencyOnBattery,
             onBattery = watts is not null,
             totalRamGb = Math.Round(mem.ullTotalPhys / 1073741824.0, 1),
             usedRamGb = Math.Round((mem.ullTotalPhys - mem.ullAvailPhys) / 1073741824.0, 1),
@@ -261,7 +279,9 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         return new
         {
             s.StartWithWindows, s.NotifyFullHold, s.FullHoldMinutes, s.NotifyLow, s.LowPercent, s.NotifyHigh, s.HighPercent,
-            s.NotifySleepDrain, s.NotifyGpu, s.SoundsOn, s.SoundPack, s.PlugSounds, s.Mode, s.ApplyPowerMode, s.ChargeLimitOn, s.ChatModel, s.EmbedModel
+            s.NotifySleepDrain, s.NotifyGpu, s.SoundsOn, s.SoundPack, s.PlugSounds, s.Mode, s.ApplyPowerMode, s.ChargeLimitOn,
+            s.QuietHoursOn, s.QuietFrom, s.QuietTo, s.AutoModeOnPower, s.AcMode, s.BatteryMode, s.AutoGamingMode, s.AutoEfficiencyOnBattery,
+            s.EfficiencyApps, s.WeeklyReportOn, s.WidgetOn, packs = Sounds.Packs
         };
     }
 
@@ -283,7 +303,16 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
                 case "notifySleepDrain": s.NotifySleepDrain = value.GetValue<bool>(); break;
                 case "notifyGpu": s.NotifyGpu = value.GetValue<bool>(); break;
                 case "soundsOn": s.SoundsOn = value.GetValue<bool>(); break;
-                case "soundPack": s.SoundPack = value.GetValue<string>() == "pulse" ? "pulse" : "nebula"; break;
+                case "soundPack": s.SoundPack = Sounds.Packs.Contains(value.GetValue<string>()) ? value.GetValue<string>() : "aurora"; break;
+                case "quietHoursOn": s.QuietHoursOn = value.GetValue<bool>(); break;
+                case "quietFrom": s.QuietFrom = Math.Clamp(value.GetValue<int>(), 0, 23); break;
+                case "quietTo": s.QuietTo = Math.Clamp(value.GetValue<int>(), 0, 23); break;
+                case "autoModeOnPower": s.AutoModeOnPower = value.GetValue<bool>(); break;
+                case "acMode": s.AcMode = Modes.Get(value.GetValue<string>()).Id; break;
+                case "batteryMode": s.BatteryMode = Modes.Get(value.GetValue<string>()).Id; break;
+                case "autoGamingMode": s.AutoGamingMode = value.GetValue<bool>(); break;
+                case "autoEfficiencyOnBattery": s.AutoEfficiencyOnBattery = value.GetValue<bool>(); break;
+                case "weeklyReportOn": s.WeeklyReportOn = value.GetValue<bool>(); break;
                 case "plugSounds": s.PlugSounds = value.GetValue<bool>(); break;
                 case "applyPowerMode": s.ApplyPowerMode = value.GetValue<bool>(); break;
                 case "chargeLimitOn": s.ChargeLimitOn = value.GetValue<bool>(); break;
@@ -294,58 +323,107 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
 
     // ---------- assistant ----------
 
-    private async Task<object?> AssistantStatusAsync()
-    {
-        var running = await _ollama.RunningAsync();
-        var models = running ? await _ollama.ModelsAsync() : new List<string>();
-        var s = monitor.Settings;
-        return new AssistantStatus(Ollama.Installed, running, Ollama.Has(models, s.ChatModel), Ollama.Has(models, s.EmbedModel), s.ChatModel, s.EmbedModel, OllamaSetup.ModelsFolder());
-    }
-
-    private async Task SetupAssistantAsync()
-    {
-        if (_setupRunning) return;
-        _setupRunning = true;
-        try
-        {
-            void Progress(string stage, double pct) => Emit("setup", new { stage, progress = pct });
-            await OllamaSetup.InstallAsync(Progress);
-            Progress("Starting the AI engine", -1);
-            if (!await _ollama.EnsureRunningAsync()) throw new InvalidOperationException("Ollama is installed but didn't start. Open it from the Start menu once, then try again.");
-            var s = monitor.Settings;
-            foreach (var model in new[] { s.EmbedModel, s.ChatModel })
-            {
-                if (Ollama.Has(await _ollama.ModelsAsync(), model)) continue;
-                await _ollama.PullAsync(model, (status, pct) => Progress($"Downloading {model}: {status}", pct));
-            }
-            Progress("Indexing the knowledge base", -1);
-            await Assistant.IndexAsync(s.EmbedModel);
-            Emit("setup", new { done = true });
-        }
-        catch (Exception e)
-        {
-            Emit("setup", new { done = true, error = e.Message });
-            App.Log("Assistant setup: " + e);
-        }
-        finally { _setupRunning = false; }
-    }
-
     private async Task AskAsync(long id, string question)
     {
         _chatCts?.Cancel();
-        _chatCts = new CancellationTokenSource();
+        var cts = _chatCts = new CancellationTokenSource();
         try
         {
-            var s = monitor.Settings;
-            double? watts = monitor.Latest is { OnAc: false, RateMw: < 0 } b ? -b.RateMw!.Value / 1000.0 : null;
-            var facts = Facts.Build(monitor.Store, monitor.Latest ?? BatteryReader.Read(), monitor.Apps.Sample(watts), monitor.Plug, s);
-            var hits = await Assistant.AskAsync(question, facts, s.ChatModel, s.EmbedModel, d => Emit("chat", new { id, delta = d }), _chatCts.Token);
-            Emit("chat", new { id, done = true, sources = hits.Select(h => h.Chunk.Title) });
+            var s = monitor.Latest ?? BatteryReader.Read();
+            double? watts = s is { OnAc: false, RateMw: < 0 } b ? -b.RateMw!.Value / 1000.0 : null;
+            var apps = monitor.Apps.LastSample.Count > 0 ? monitor.Apps.LastSample : monitor.Apps.Sample(watts);
+            var ctx = AssistantContext.Build(monitor.Store, s, apps, monitor.Plug, monitor.Settings,
+                monitor.GpuHolders.Select(g => g.ProcessName).Distinct().ToList());
+            var answer = _assistant.Ask(question, ctx);
+            // Reveal the answer a few words at a time; it's already complete, this is only for readability.
+            var words = System.Text.RegularExpressions.Regex.Split(answer.Text, @"(?<=\s)");
+            var chunk = new System.Text.StringBuilder();
+            for (int i = 0; i < words.Length; i++)
+            {
+                chunk.Append(words[i]);
+                if (chunk.Length >= 18 || i == words.Length - 1)
+                {
+                    if (cts.IsCancellationRequested) return;
+                    Emit("chat", new { id, delta = chunk.ToString() });
+                    chunk.Clear();
+                    await Task.Delay(14);
+                }
+            }
+            Emit("chat", new { id, done = true, sources = answer.Sources, followUps = answer.FollowUps, topic = answer.Topic });
         }
         catch (Exception e)
         {
+            App.Log("Assistant: " + e);
             Emit("chat", new { id, error = e.Message });
         }
+    }
+
+    // ---------- apps, cleanup, reports ----------
+
+    private object SetEfficiency(string app, bool on)
+    {
+        int n = monitor.SetEfficiency(app, on);
+        return Ok(on
+            ? (n > 0 ? $"Efficiency mode on for {n} process{(n == 1 ? "" : "es")}." : "Saved. It applies when the app is running.") +
+              (monitor.Settings.AutoEfficiencyOnBattery ? " Guardian X keeps it on while you're on battery." : "")
+            : "Efficiency mode off.");
+    }
+
+    private object CleanTemp()
+    {
+        var r = Cleanup.CleanTemp();
+        return Ok($"Freed {r.FreedGb:0.00} GB ({r.Deleted} files). {(r.Skipped > 0 ? $"{r.Skipped} files in use were left alone." : "")}".Trim());
+    }
+
+    private object EmptyRecycleBin()
+    {
+        var scan = Cleanup.ScanTemp();
+        if (scan.RecycleBinItems == 0) return Ok("The Recycle Bin is already empty.");
+        var yes = System.Windows.Application.Current.Dispatcher.Invoke(() => System.Windows.MessageBox.Show(
+            $"Permanently delete {scan.RecycleBinItems} item{(scan.RecycleBinItems == 1 ? "" : "s")} ({scan.RecycleBinGb:0.00} GB) in the Recycle Bin? This can't be undone.",
+            "Guardian X", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No));
+        if (yes != System.Windows.MessageBoxResult.Yes) return Ok("Kept the Recycle Bin as it is.");
+        return Ok($"Emptied the Recycle Bin and freed {Cleanup.EmptyRecycleBin():0.00} GB.");
+    }
+
+    private void ShowFile(string path)
+    {
+        // Only files from the last scan, so the interface can't be used to open arbitrary paths.
+        if (_bigFiles?.Any(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase)) != true)
+            throw new InvalidOperationException("Scan again, then pick the file from the list.");
+        Cleanup.ShowInFolder(path);
+    }
+
+    private object WeeklyReportNow()
+    {
+        var s = monitor.Latest ?? BatteryReader.Read();
+        var ctx = AssistantContext.Build(monitor.Store, s, monitor.Apps.LastSample, monitor.Plug, monitor.Settings);
+        var path = Core.Reports.WeeklyReport.Write(monitor.Store, ctx);
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        return Ok("Report saved and opened in your browser.");
+    }
+
+    private object ReportsList()
+    {
+        var dir = Core.Reports.WeeklyReport.Folder;
+        if (!Directory.Exists(dir)) return Array.Empty<object>();
+        return new DirectoryInfo(dir).GetFiles("guardian-x-week-*.html").OrderByDescending(f => f.Name).Take(12)
+            .Select(f => new { name = f.Name, date = f.LastWriteTime }).ToList();
+    }
+
+    private static void OpenReport(string name)
+    {
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || !name.StartsWith("guardian-x-week-")) throw new InvalidOperationException("Unknown report.");
+        var path = Path.Combine(Core.Reports.WeeklyReport.Folder, name);
+        if (!File.Exists(path)) throw new FileNotFoundException("That report was deleted.");
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+    }
+
+    private void SetWidget(bool on)
+    {
+        monitor.Settings.WidgetOn = on;
+        monitor.Settings.Save();
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() => ((App)System.Windows.Application.Current).ShowWidget(on));
     }
 
     // ---------- actions ----------
@@ -381,6 +459,7 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         try { var b = BatteryReader.Read(); report.Add(b is null ? "Battery: not found." : $"Battery: read OK ({b.Percent:0}%)."); } catch (Exception e) { report.Add("Battery: " + e.Message); }
         report.Add(monitor.Gpu.Available ? $"GPU watch: {monitor.Gpu.AdapterName}." : "GPU watch: no discrete GPU found.");
         report.Add(File.Exists(McpSetup.ExePath) ? "MCP server: present." : "MCP server: missing (reinstall to restore).");
+        report.Add($"Assistant: {_assistant.Chunks.Count} knowledge sections loaded, runs on this PC.");
         return Ok(string.Join("\n", report));
     }
 

@@ -1,3 +1,4 @@
+using GuardianX.Core;
 using GuardianX.Core.Data;
 using GuardianX.Core.Apps;
 using GuardianX.Core.Assistant;
@@ -36,15 +37,34 @@ public class ChargeControllerTests
 public class SoundTests
 {
     [Fact]
-    public void SoundsAreValidWavesAndDifferBetweenPacks()
+    public void EveryPackRendersCleanStereoForEveryCue()
     {
-        var a = Sounds.Synth(Cue.Charged, "nebula");
-        var b = Sounds.Synth(Cue.Charged, "pulse");
+        foreach (var pack in Sounds.Packs)
+            foreach (Cue cue in Enum.GetValues(typeof(Cue)))
+            {
+                var x = Sounds.Render(cue, pack);
+                Assert.True(x.Length % 2 == 0, "interleaved stereo");
+                double seconds = x.Length / 2.0 / Sounds.Rate;
+                Assert.InRange(seconds, 0.8, 3.5);
+                float peak = x.Max(Math.Abs);
+                Assert.InRange(peak, 0.6f, 0.75f);                       // normalised to about -3 dBFS, never clipping
+                Assert.True(Math.Abs(x[^2]) < 0.01 && Math.Abs(x[^1]) < 0.01, $"{pack}/{cue} ends with a click");
+                double l = 0, r = 0, diff = 0;
+                for (int i = 0; i < x.Length; i += 2) { l += x[i] * x[i]; r += x[i + 1] * x[i + 1]; diff += (x[i] - x[i + 1]) * (x[i] - x[i + 1]); }
+                Assert.True(diff > (l + r) * 0.01, $"{pack}/{cue} is effectively mono");
+            }
+    }
+
+    [Fact]
+    public void PacksSoundDifferentAndWavIsStereoPcm()
+    {
+        var a = Sounds.Render(Cue.Charged, "aurora");
+        var b = Sounds.Render(Cue.Charged, "pulse");
         Assert.NotEqual(a.Length, b.Length);
-        Assert.All(a, s => Assert.InRange(s, -1f, 1f));
-        Assert.True(a.Max() > 0.3f);
         var wav = Sounds.Wav(a);
         Assert.Equal("RIFF", System.Text.Encoding.ASCII.GetString(wav, 0, 4));
+        Assert.Equal(2, BitConverter.ToInt16(wav, 22));                 // channels
+        Assert.Equal(44100, BitConverter.ToInt32(wav, 24));
         Assert.Equal(44 + a.Length * 2, wav.Length);
     }
 }
@@ -98,11 +118,184 @@ public class AssistantTests
         Assert.Contains(hits, h => h.Chunk.Title.Contains(expectedTitle));
     }
 
-    [Fact]
-    public void CosineOfIdenticalVectorsIsOne()
+    [Theory]
+    [InlineData("plugged", "Why shouldn't I keep it plugged in all the time?")]
+    [InlineData("plugsetup", "How do I set up the 80% limit with a Tapo plug?")]
+    [InlineData("apps", "Which apps are draining my battery?")]
+    [InlineData("apps", "what is using so much ram")]
+    [InlineData("forecast", "When will my battery reach 80% health?")]
+    [InlineData("drop", "What caused my biggest battery drop?")]
+    [InlineData("storage", "How much storage do I have?")]
+    [InlineData("startup", "Which apps start with Windows?")]
+    [InlineData("gpu", "Is the NVIDIA GPU awake?")]
+    [InlineData("heat", "How hot does my battery get?")]
+    [InlineData("modes", "What mode should I use?")]
+    [InlineData("tips", "How can I make my battery last longer?")]
+    [InlineData("sleep", "why does it drain overnight in sleep")]
+    [InlineData("status", "how long will my battery last right now")]
+    [InlineData("greeting", "hello")]
+    public void RoutesQuestionsToTheRightTopic(string topic, string question)
     {
-        Assert.Equal(1.0, Knowledge.Cosine(new float[] { 1, 2, 3 }, new float[] { 1, 2, 3 }), 6);
-        Assert.Equal(0.0, Knowledge.Cosine(new float[] { 1, 0 }, new float[] { 0, 1 }), 6);
+        Assert.Equal(topic, new LocalAssistant().Ask(question, AssistantFixture.Context()).Topic);
+    }
+
+    [Fact]
+    public void AnswersUseTheLaptopsOwnNumbers()
+    {
+        var ctx = AssistantFixture.Context();
+        var a = new LocalAssistant();
+        var health = a.Ask("How is my battery health?", ctx);
+        Assert.Contains("89.8%", health.Text);
+        Assert.Contains("54 cycles", health.Text);
+        Assert.Contains("Your Guardian X data", health.Sources);
+        var apps = a.Ask("Which apps are draining my battery?", ctx);
+        Assert.Contains("Microsoft Edge", apps.Text);
+        var status = a.Ask("how long will my battery last right now", ctx);
+        Assert.Contains("67%", status.Text);
+        Assert.Contains("h", status.Text);
+        Assert.NotEmpty(status.FollowUps);
+    }
+
+    [Fact]
+    public void ShortFollowUpStaysOnTopicAndUnknownIsHonest()
+    {
+        var ctx = AssistantFixture.Context();
+        var a = new LocalAssistant();
+        a.Ask("Is the NVIDIA GPU awake?", ctx);
+        Assert.Equal("gpu", a.Ask("and why?", ctx).Topic);
+        var unknown = a.Ask("what's the capital of Peru", ctx);
+        Assert.Equal("unknown", unknown.Topic);
+        Assert.Contains("don't have", unknown.Text);
+    }
+
+    [Fact]
+    public void KnowledgeQuestionsWithoutATopicQuoteTheBestSection()
+    {
+        var a = new LocalAssistant().Ask("adaptive battery optimizer F10 BIOS", AssistantFixture.Context());
+        Assert.Equal("knowledge", a.Topic);
+        Assert.Contains(a.Sources, s => s.Contains("Adaptive Battery Optimizer"));
+    }
+}
+
+internal static class AssistantFixture
+{
+    public static AssistantContext Context()
+    {
+        var now = DateTimeOffset.Now;
+        var battery = new GuardianX.Core.Battery.BatterySnapshot(now, 67, 42000, 62893, 70070, 54, -18500, 15900, null, false, false, "LION", "HP", "Primary");
+        var daily = new List<(DateOnly Day, int FullMWh, int DesignMWh, int Cycles)>();
+        var start = DateOnly.FromDateTime(DateTime.Today.AddDays(-120));
+        for (int i = 0; i <= 120; i += 7) daily.Add((start.AddDays(i), 69500 - i * 55, 70070, 1 + i / 3));
+        var wear = GuardianX.Core.Insights.BatteryInsights.Wear(battery.FullMWh, battery.DesignMWh, battery.Cycles, daily);
+        return new AssistantContext
+        {
+            Battery = battery,
+            Wear = wear,
+            Forecast = GuardianX.Core.Insights.BatteryInsights.Forecast(wear, battery, 80, now),
+            Daily = daily,
+            ChargerHoursPerDay = 18.2,
+            Today = new GuardianX.Core.Insights.StressReport(10, "Low", 0.5, 0, 0, false),
+            Apps = new[]
+            {
+                new GuardianX.Core.Apps.AppUsage("msedge", "Microsoft Edge", 29, 3200, 5.6, 0.3, 2.4, "browser"),
+                new GuardianX.Core.Apps.AppUsage("node", "Node.js", 74, 3800, 0.1, 0, 0.1, "app"),
+            },
+            Settings = new Settings(),
+            Storage = () => new GuardianX.Core.Apps.StorageReport(
+                new[] { new GuardianX.Core.Apps.DriveUsage("C:\\", "OS", 475, 14), new GuardianX.Core.Apps.DriveUsage("D:\\", "Data", 931, 90) },
+                new[] { new GuardianX.Core.Apps.InstalledApp("Visual Studio", 22.5, "Microsoft") }, 3.2),
+        };
+    }
+}
+
+public class ForecastTests
+{
+    private static GuardianX.Core.Insights.WearReport Wear(double health, double? perMonth) => new(health, 100 - health, 54, 18.6, perMonth, 120);
+
+    [Fact]
+    public void HealthReaches80AtTheMeasuredRate()
+    {
+        var f = GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(89.8, 2.0), null, 80, new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero));
+        Assert.Equal(4.9, f.MonthsTo80);
+        Assert.Equal(new DateOnly(2027, 4, 17), f.HealthAt80On);
+    }
+
+    [Fact]
+    public void NoDateWithoutADownwardTrend()
+    {
+        Assert.Null(GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(95, null), null, 80, DateTimeOffset.Now).HealthAt80On);
+        Assert.Null(GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(95, 0), null, 80, DateTimeOffset.Now).HealthAt80On);
+        Assert.Null(GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(78, 2), null, 80, DateTimeOffset.Now).HealthAt80On);
+    }
+
+    [Fact]
+    public void ChargingSlowsDownAbove80Percent()
+    {
+        // 50 Wh full, at 40%, charging at 20 W: 20 Wh to 80% takes 1 h; the last 10 Wh at half rate takes 1 h more.
+        var s = new GuardianX.Core.Battery.BatterySnapshot(DateTimeOffset.Now, 40, 20000, 50000, 60000, 10, 20000, 16000, null, true, true, "LION", "HP", "x");
+        var f = GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(83, 1), s, 80, DateTimeOffset.Now);
+        Assert.Equal(1.0, f.HoursToLimit!.Value, 2);
+        Assert.Equal(2.0, f.HoursToFull!.Value, 2);
+        Assert.Null(f.HoursToEmpty);
+    }
+
+    [Fact]
+    public void DischargeGivesTimeToEmptyAndChargeAtNight()
+    {
+        var now = new DateTimeOffset(2026, 11, 19, 21, 0, 0, TimeSpan.Zero);
+        var s = new GuardianX.Core.Battery.BatterySnapshot(now, 60, 30000, 50000, 60000, 10, -10000, 15000, null, false, false, "LION", "HP", "x");
+        var f = GuardianX.Core.Insights.BatteryInsights.Forecast(Wear(83, 1), s, 80, now);
+        Assert.Equal(3.0, f.HoursToEmpty!.Value, 2);
+        Assert.Equal(20, f.PercentAtNight);   // 2 h at 10 W from 30 Wh of 50 Wh
+    }
+}
+
+public class SettingsTests
+{
+    [Theory]
+    [InlineData(23, 7, 23, true)]
+    [InlineData(23, 7, 3, true)]
+    [InlineData(23, 7, 7, false)]
+    [InlineData(23, 7, 12, false)]
+    [InlineData(13, 15, 14, true)]
+    [InlineData(13, 15, 16, false)]
+    public void QuietHoursWrapPastMidnight(int from, int to, int hour, bool quiet)
+    {
+        var s = new Settings { QuietHoursOn = true, QuietFrom = from, QuietTo = to };
+        Assert.Equal(quiet, s.IsQuiet(new DateTime(2026, 11, 19, hour, 30, 0)));
+        Assert.False(new Settings { QuietHoursOn = false }.IsQuiet(new DateTime(2026, 11, 19, 2, 0, 0)));
+    }
+
+    [Fact]
+    public void WindowsAndGuardianXAreNeverThrottled()
+    {
+        Assert.False(EfficiencyMode.Allowed("explorer"));
+        Assert.False(EfficiencyMode.Allowed("GuardianX"));
+        Assert.True(EfficiencyMode.Allowed("msedge"));
+    }
+}
+
+public class ReportTests
+{
+    [Fact]
+    public void WeeklyReportIsSelfContainedHtml()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"gx-report-{Guid.NewGuid():N}.db");
+        try
+        {
+            using var store = new Store(path);
+            var html = GuardianX.Core.Reports.WeeklyReport.Build(store, AssistantFixture.Context(), DateTime.Today);
+            Assert.StartsWith("<!DOCTYPE html>", html.TrimStart());
+            Assert.Contains("89.8%", html);
+            Assert.Contains("<svg", html);
+            Assert.DoesNotContain("<script", html);
+            Assert.DoesNotContain("http", html.Replace("http-equiv", ""));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var f in new[] { path, path + "-wal", path + "-shm" }) if (File.Exists(f)) File.Delete(f);
+        }
     }
 }
 

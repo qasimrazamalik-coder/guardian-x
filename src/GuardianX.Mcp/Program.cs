@@ -51,6 +51,39 @@ public static class GuardianTools
         return Facts.Build(store, BatteryReader.Read(), apps.Sample(null), plug, settings);
     }
 
+    [McpServerTool, Description("Forecasts: when battery health reaches 80% at the measured trend, time to empty / full / the charge limit at the current power, and charge expected at 11 pm.")]
+    public static string GetForecast()
+    {
+        var s = BatteryReader.Read();
+        if (s is null) return "No battery found on this PC.";
+        using var store = OpenStore();
+        var settings = Settings.Load();
+        var mode = Modes.Get(settings.Mode);
+        var wear = BatteryInsights.Wear(s.FullMWh, s.DesignMWh, s.Cycles, store.DailyCapacity(400));
+        var f = BatteryInsights.Forecast(wear, s, settings.ChargeLimitOn ? mode.ChargeLimit : 100, DateTimeOffset.Now);
+        var sb = new StringBuilder();
+        sb.AppendLine($"Health {f.HealthNow:0.0}%" + (f.LossPerMonth is double m ? $", losing {m:0.0}% a month." : "."));
+        sb.AppendLine(f.HealthAt80On is DateOnly d ? $"Reaches 80% health around {d:MMMM yyyy} ({f.MonthsTo80:0.#} months) if the trend continues." : "No 80% health date: " + f.Basis);
+        if (f.HoursToEmpty is double e) sb.AppendLine($"About {BatteryInsights.FormatHours(e)} to empty at the current draw" + (f.PercentAtNight is double n ? $"; about {n:0}% at 11 pm." : "."));
+        if (f.HoursToLimit is double l) sb.AppendLine($"About {BatteryInsights.FormatHours(l)} to the {mode.ChargeLimit}% limit.");
+        if (f.HoursToFull is double fl) sb.AppendLine($"About {BatteryInsights.FormatHours(fl)} to full.");
+        return sb.ToString().Trim();
+    }
+
+    [McpServerTool, Description("Ask Guardian X's own built-in assistant a question about this laptop's battery, charging, apps, storage, sleep, GPU, heat, modes or alerts. Answers from live data and its knowledge base, with sources.")]
+    public static string AskGuardian([Description("The question, in plain English")] string question)
+    {
+        using var store = OpenStore();
+        var settings = Settings.Load();
+        var plug = new PlugState(settings.Plug.Kind != "none", settings.Plug.Kind, null, "state not read by the MCP server", null);
+        var apps = new AppMonitor();
+        apps.Sample(null);
+        Thread.Sleep(1200);
+        var ctx = AssistantContext.Build(store, BatteryReader.Read(), apps.Sample(null), plug, settings);
+        var a = new LocalAssistant().Ask(question, ctx);
+        return a.Text + (a.Sources.Count > 0 ? "\n\nSources: " + string.Join("; ", a.Sources) : "");
+    }
+
     [McpServerTool, Description("Battery capacity history by day (from Windows' battery report and Guardian X readings), with the monthly wear trend.")]
     public static string GetHealthHistory([Description("How many days back, default 180")] int days = 180)
     {

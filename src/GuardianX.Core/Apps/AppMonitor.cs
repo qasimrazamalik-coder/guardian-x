@@ -49,6 +49,9 @@ public sealed class AppMonitor
     /// Samples every process. CPU and disk need two samples; the first call returns zeros for those.
     /// <paramref name="dischargeWatts"/> is the battery discharge right now (null on the charger).
     /// </summary>
+    /// <summary>The most recent sample, for readers that shouldn't take a new one.</summary>
+    public IReadOnlyList<AppUsage> LastSample { get; private set; } = Array.Empty<AppUsage>();
+
     public IReadOnlyList<AppUsage> Sample(double? dischargeWatts)
     {
         lock (_lock)
@@ -102,7 +105,9 @@ public sealed class AppMonitor
                 list.Add(new AppUsage(key, FriendlyName(key, g.path), g.procs, Math.Round(g.mem / 1048576.0, 1),
                     Math.Round(cpuPct, 1), seconds > 0 ? Math.Round(g.ioBytes / seconds / 1048576.0, 2) : 0, watts, KindOf(key)));
             }
-            return list.OrderByDescending(a => a.CpuPercent).ThenByDescending(a => a.MemoryMb).ToList();
+            var sorted = list.OrderByDescending(a => a.CpuPercent).ThenByDescending(a => a.MemoryMb).ToList();
+            LastSample = sorted;
+            return sorted;
         }
     }
 

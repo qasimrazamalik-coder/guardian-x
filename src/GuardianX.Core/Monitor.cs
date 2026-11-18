@@ -22,14 +22,35 @@ public sealed class Settings
     public bool NotifySleepDrain { get; set; } = true;
     public bool NotifyGpu { get; set; } = true;
     public bool SoundsOn { get; set; } = true;
-    public string SoundPack { get; set; } = "nebula";
+    public string SoundPack { get; set; } = "aurora";
     public bool PlugSounds { get; set; } = true;
     public string Mode { get; set; } = "desk";
     public bool ApplyPowerMode { get; set; } = true;
     public bool ChargeLimitOn { get; set; } = true;
     public PlugConfig Plug { get; set; } = new();
-    public string ChatModel { get; set; } = "qwen2.5:7b";
-    public string EmbedModel { get; set; } = "nomic-embed-text";
+
+    // Quiet hours: alerts still show, without sound.
+    public bool QuietHoursOn { get; set; }
+    public int QuietFrom { get; set; } = 23;
+    public int QuietTo { get; set; } = 7;
+
+    // Auto-actions
+    public bool AutoModeOnPower { get; set; }
+    public string AcMode { get; set; } = "desk";
+    public string BatteryMode { get; set; } = "saver";
+    public bool AutoGamingMode { get; set; }
+    public bool AutoEfficiencyOnBattery { get; set; }
+    public List<string> EfficiencyApps { get; set; } = new();
+
+    public bool WeeklyReportOn { get; set; } = true;
+    public string LastWeeklyReport { get; set; } = "";
+    public bool WidgetOn { get; set; }
+    public double WidgetLeft { get; set; } = double.NaN;
+    public double WidgetTop { get; set; } = double.NaN;
+
+    public bool IsQuiet(DateTime now) =>
+        QuietHoursOn && QuietFrom != QuietTo &&
+        (QuietFrom < QuietTo ? now.Hour >= QuietFrom && now.Hour < QuietTo : now.Hour >= QuietFrom || now.Hour < QuietTo);
 
     public static string FilePath => Path.Combine(Store.DefaultFolder, "settings.json");
 
@@ -91,12 +112,16 @@ public sealed class GuardianMonitor : IDisposable
     public event Action<BatterySnapshot>? Updated;
     public event Action<Alert>? Alerted;
     public event Action? ReportImported;
+    public event Action<string>? WeeklyReportReady;
 
     private readonly Timer _timer;
     private int _ticking;
     private bool _fullHoldWarned, _lowWarned, _highWarned, _plugMismatchWarned;
     private readonly HashSet<string> _gpuWarned = new(StringComparer.OrdinalIgnoreCase);
     private bool? _lastOnAc;
+    private string? _modeBeforeGame;
+    public bool GamingDetected { get; private set; }
+    public string? LastAutoAction { get; private set; }
     private DateTime _lastReport = DateTime.MinValue;
     private ISmartPlug? _plug;
     private string _plugKey = "";
@@ -142,15 +167,18 @@ public sealed class GuardianMonitor : IDisposable
                 Store.AddEvent(s.OnAc ? "ac_on" : "ac_off", s.Percent);
                 if (s.OnAc) { _lowWarned = false; _gpuWarned.Clear(); }
                 else { _fullHoldWarned = false; _highWarned = false; ChargeToFull = false; }
-                if (Settings.PlugSounds && Settings.SoundsOn) Sounds.Play(s.OnAc ? Cue.PluggedIn : Cue.Unplugged, Settings.SoundPack);
+                if (Settings.PlugSounds && Settings.SoundsOn && !Settings.IsQuiet(DateTime.Now)) Sounds.Play(s.OnAc ? Cue.PluggedIn : Cue.Unplugged, Settings.SoundPack);
+                OnPowerSourceChanged(s.OnAc);
             }
             _lastOnAc = s.OnAc;
+            RunAutoActions(s);
 
             ImportReportIfDue();
             RunChargeLimiter(s);
             CheckThresholds(s);
             CheckFullHold(s);
             TrackApps(s);
+            CheckWeeklyReport(s);
             Updated?.Invoke(s);
         }
         catch (Exception e)
@@ -160,10 +188,98 @@ public sealed class GuardianMonitor : IDisposable
         finally { Interlocked.Exchange(ref _ticking, 0); }
     }
 
-    private void Raise(Alert a)
+    private void Raise(Alert a, bool sound = true)
     {
-        if (Settings.SoundsOn) Sounds.Play(a.Sound, Settings.SoundPack);
+        if (sound && Settings.SoundsOn && !Settings.IsQuiet(DateTime.Now)) Sounds.Play(a.Sound, Settings.SoundPack);
         Alerted?.Invoke(a);
+    }
+
+    // ---------- auto-actions ----------
+
+    private void OnPowerSourceChanged(bool onAc)
+    {
+        if (Settings.AutoModeOnPower && !GamingDetected)
+        {
+            var target = Modes.Get(onAc ? Settings.AcMode : Settings.BatteryMode);
+            if (target.Id != Settings.Mode)
+            {
+                SwitchMode(target.Id);
+                Note($"Switched to {target.Name} mode ({(onAc ? "charger connected" : "on battery")}).");
+            }
+        }
+        if (Settings.AutoEfficiencyOnBattery && onAc)
+            foreach (var app in Settings.EfficiencyApps) EfficiencyMode.Set(app, false);
+    }
+
+    private void RunAutoActions(BatterySnapshot s)
+    {
+        if (Settings.AutoGamingMode)
+        {
+            bool game = GameDetector.FullScreenGame();
+            if (game && !GamingDetected)
+            {
+                GamingDetected = true;
+                if (Settings.Mode != "gaming")
+                {
+                    _modeBeforeGame = Settings.Mode;
+                    SwitchMode("gaming");
+                    Note("Game detected: switched to Gaming mode.");
+                }
+            }
+            else if (!game && GamingDetected)
+            {
+                GamingDetected = false;
+                var back = _modeBeforeGame ?? (Settings.AutoModeOnPower ? (s.OnAc ? Settings.AcMode : Settings.BatteryMode) : Settings.Mode);
+                _modeBeforeGame = null;
+                if (back != Settings.Mode) { SwitchMode(back); Note($"Game closed: back to {Modes.Get(back).Name} mode."); }
+            }
+        }
+        else GamingDetected = false;
+
+        // Re-applied every minute on battery so newly started processes of those apps are covered too.
+        if (Settings.AutoEfficiencyOnBattery && !s.OnAc)
+            foreach (var app in Settings.EfficiencyApps.Where(EfficiencyMode.Allowed)) EfficiencyMode.Set(app, true);
+    }
+
+    /// <summary>Once a week (from Monday morning) writes the report for the past 7 days and says so.</summary>
+    private void CheckWeeklyReport(BatterySnapshot s)
+    {
+        if (!Settings.WeeklyReportOn) return;
+        var now = DateTime.Now;
+        var monday = now.Date.AddDays(-(((int)now.DayOfWeek + 6) % 7));
+        if (now.Hour < 9 || Settings.LastWeeklyReport == monday.ToString("yyyy-MM-dd")) return;
+        if (Store.SampleCount() < 60) return; // not enough to report on yet
+        var ctx = Assistant.AssistantContext.Build(Store, s, Apps.LastSample, Plug, Settings);
+        var path = Reports.WeeklyReport.Write(Store, ctx, now);
+        Settings.LastWeeklyReport = monday.ToString("yyyy-MM-dd");
+        Settings.Save();
+        WeeklyReportReady?.Invoke(path);
+        Raise(new Alert("Your weekly battery report is ready", "Click to open it. It's also in Settings > Reports.", Cue.Alert), sound: false);
+    }
+
+    private void Note(string text)
+    {
+        LastAutoAction = $"{DateTime.Now:HH:mm} {text}";
+        Store.AddEvent("auto", Latest?.Percent ?? 0);
+        Alerted?.Invoke(new Alert("Guardian X", text, Cue.Alert));
+    }
+
+    private void SwitchMode(string id)
+    {
+        var mode = Modes.Get(id);
+        Settings.Mode = mode.Id;
+        if (Settings.ApplyPowerMode) Modes.Apply(mode.Overlay);
+        Settings.Save();
+    }
+
+    /// <summary>Turns Windows Efficiency mode on or off for an app now, and remembers it for auto-actions.</summary>
+    public int SetEfficiency(string processName, bool on)
+    {
+        if (!EfficiencyMode.Allowed(processName)) throw new InvalidOperationException($"{processName} is part of Windows or Guardian X and is left alone.");
+        Settings.EfficiencyApps.RemoveAll(a => string.Equals(a, processName, StringComparison.OrdinalIgnoreCase));
+        if (on) Settings.EfficiencyApps.Add(processName);
+        Settings.Save();
+        return EfficiencyMode.Set(processName, on);
     }
 
     // ---------- smart plug ----------
@@ -288,10 +404,8 @@ public sealed class GuardianMonitor : IDisposable
 
     public void ApplyMode(string id)
     {
-        var mode = Modes.Get(id);
-        Settings.Mode = mode.Id;
-        if (Settings.ApplyPowerMode) Modes.Apply(mode.Overlay);
-        Settings.Save();
+        _modeBeforeGame = null; // a manual choice wins over the game auto-switch
+        SwitchMode(id);
         Task.Run(Tick);
     }
 
