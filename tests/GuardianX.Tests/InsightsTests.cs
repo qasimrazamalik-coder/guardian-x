@@ -168,7 +168,7 @@ public class InsightsTests
             end.AddDays(-i - 1), end.AddDays(-i), 62000, 70070, 54,
             TimeSpan.FromHours(22), TimeSpan.FromHours(1), TimeSpan.FromHours(1), TimeSpan.Zero)).ToList();
         var hours = BatteryInsights.ChargerHoursPerDay(periods);
-        Assert.Equal(23, hours);
+        Assert.Equal(23.0, hours!.Value);
         var tips = BatteryInsights.Coach(BatteryInsights.Wear(69000, 70070, 100, []),
             new StressReport(0, "Low", 0, 0, 0, false), 0, null, [], hours);
         Assert.Contains(tips, t => t.Title == "Plugged in about 23 hours a day");
