@@ -2,8 +2,8 @@
 
 A battery coach for HP OMEN gaming laptops. Windows shows you a percentage; Guardian X tells you **why your
 battery is wearing out and what to change**, using the battery driver's own numbers and Windows' battery history,
-then helps you change it: an 80% charge limit through a smart plug, power modes, per-app battery use, and a local
-AI assistant that answers from your own data.
+then helps you change it: an 80% charge limit through a smart plug, power modes, forecasts, per-app battery use, cleanup
+tools, and a built-in assistant that answers from your own data, entirely on your PC.
 
 ![Overview](docs/overview.png)
 
@@ -18,9 +18,14 @@ AI assistant that answers from your own data.
 | **Apps & storage** | Live RAM, CPU, disk and estimated battery watts for every app, with practical tips; disk space, largest apps and temp files |
 | **80% charge limit** | With a TP-Link Tapo (P100/P110) or Shelly plug, Guardian X cuts the charger at your limit and turns it back on at the resume level. Without a plug it alerts you to unplug |
 | **Modes** | Desk 60–80%, Gaming 60–80% with best performance, Travel to 100%, Saver 50–80% with best efficiency. Each can switch the Windows power mode |
-| **Alerts with real sounds** | Synthesised sound packs (not Windows' default beeps) at your high and low levels (80% and 20% by default), when sitting full too long, on unusual sleep drain, and when an app keeps the NVIDIA GPU awake on battery |
-| **Assistant** | Chat about your battery, answered by a model running on your laptop (Ollama: qwen2.5 7B plus nomic-embed-text for search). RAG over a battery knowledge base and your live Guardian X data. Nothing leaves the PC |
-| **MCP server** | `GuardianX.Mcp.exe` gives Claude Desktop read-only tools: battery status, briefing, health history, top apps, app battery use, storage, knowledge search, modes. One click in the Assistant page connects it |
+| **Forecasts** | When health reaches 80% at your measured trend (drawn on the health chart), time to empty, full or the charge limit (with the slower top-off above 80%), and expected charge at 11 pm |
+| **Auto-actions** | Switch modes when you plug in or unplug, Gaming mode while a game runs full screen, and Windows Efficiency mode for apps you choose while on battery |
+| **Cleanup** | Temp files (asks first, skips files in use), Recycle Bin, a big-file finder (never deletes; opens the folder), and start-up apps you can switch off the way Task Manager does |
+| **Alerts with real sounds** | Four synthesised stereo sound packs (Aurora, Crystal, Pulse, Nebula) with real reverb, at your high and low levels (80% and 20% by default), when sitting full too long, on unusual sleep drain, and when an app keeps the NVIDIA GPU awake on battery. Quiet hours silence them at night |
+| **Assistant** | Chat about your battery with a retrieval-augmented assistant built into the app: it works out what you're asking, answers from your live data and history, and backs it with the matching section of its battery guides. No AI model, no download, nothing leaves the PC |
+| **Reports & widget** | A weekly HTML report (health curve, forecast, day-by-day stress, battery use by app) and an always-on-top mini widget with live charge and power |
+| **MCP server** | `GuardianX.Mcp.exe` gives Claude Desktop read-only tools: battery status, forecast, briefing, health history, top apps, app battery use, storage, knowledge search, modes, and asking Guardian X's assistant. One click in the Assistant page connects it |
+| **Self-repair** | If its history database is ever damaged, Guardian X moves it aside and rebuilds it from every readable row on the next start |
 | **Private** | Everything stays in `%LOCALAPPDATA%\GuardianXData`. No account, no telemetry. Export to CSV or delete any time |
 
 | | |
@@ -59,9 +64,9 @@ Needs the .NET 8 SDK on Windows, and Node 18+ for the interface.
 
 ```powershell
 cd ui; npm ci; npm run build; cd ..        # builds the interface into src\GuardianX.App\wwwroot
-dotnet test GuardianX.sln                  # 40 tests
+dotnet test GuardianX.sln                  # 74 tests
 dotnet run --project src\GuardianX.App     # run it
-.\scripts\release.ps1 -Version 2.0.0       # installer in Releases\ (needs: dotnet tool install -g vpk)
+.\scripts\release.ps1 -Version 2.1.0       # installer in Releases\ (needs: dotnet tool install -g vpk)
 ```
 
 `npm run dev` in `ui\` previews the interface in a browser with sample data.
