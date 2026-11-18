@@ -39,7 +39,8 @@ internal static class DevTools
         var w = new MainWindow(monitor)
         {
             WindowStartupLocation = WindowStartupLocation.Manual,
-            Left = -20000, Top = -20000, ShowInTaskbar = false, ShowActivated = false
+            Left = -20000, Top = -20000, ShowInTaskbar = false, ShowActivated = false,
+            Height = tab == "overview" ? 1320 : 860
         };
         w.Show();
         if (tab == "history") w.TabHistory.IsChecked = true;
