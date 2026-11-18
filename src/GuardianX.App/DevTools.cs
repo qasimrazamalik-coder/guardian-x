@@ -32,8 +32,17 @@ internal static class DevTools
         File.WriteAllText(outPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    /// <summary>Points this process at a private copy of the history, so developer runs never touch live data.</summary>
+    public static void UseCopyOfLiveData()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "GuardianX-dev", Environment.ProcessId.ToString());
+        try { Store.CopyLiveTo(folder); } catch (Exception e) { Console.Error.WriteLine("Copy of live data failed: " + e.Message); }
+        Environment.SetEnvironmentVariable("GUARDIANX_DATA", folder);
+    }
+
     public static void Snapshot(App app, string path, string tab)
     {
+        UseCopyOfLiveData();
         var monitor = new GuardianMonitor(new Store(), Settings.Load(), new DgpuWatcher());
         monitor.Tick();
         var w = new MainWindow(monitor)

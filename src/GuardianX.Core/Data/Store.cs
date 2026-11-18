@@ -14,8 +14,45 @@ public sealed record PowerEvent(DateTimeOffset Time, string Kind, double Percent
 /// <summary>Local SQLite history. Nothing leaves this PC.</summary>
 public sealed class Store : IDisposable
 {
+    /// <summary>Where history, settings and logs live. GUARDIANX_DATA points developer runs at a separate folder.</summary>
     public static string DefaultFolder =>
+        Environment.GetEnvironmentVariable("GUARDIANX_DATA") is { Length: > 0 } custom
+            ? custom
+            : LiveFolder;
+
+    public static string LiveFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GuardianXData");
+
+    /// <summary>
+    /// Copies the live history into <paramref name="folder"/> with plain file reads, never opening it with SQLite.
+    /// Processes started from a packaged app (Claude Desktop from the Store, for example) don't share SQLite's
+    /// memory-mapped WAL index with the installed app, so opening the live database from them can corrupt it.
+    /// A copy of the database plus its WAL is always safe: at worst SQLite ignores a WAL that no longer matches
+    /// and the copy is a few minutes older.
+    /// </summary>
+    public static string CopyLiveTo(string folder, string? from = null)
+    {
+        from ??= LiveFolder;
+        Directory.CreateDirectory(folder);
+        foreach (var name in new[] { "guardian.db", "guardian.db-wal", "settings.json" })
+        {
+            var src = Path.Combine(from, name);
+            var dst = Path.Combine(folder, name);
+            if (File.Exists(dst)) File.Delete(dst);
+            if (!File.Exists(src)) continue;
+            using var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var output = File.Create(dst);
+            input.CopyTo(output);
+        }
+        return Path.Combine(folder, "guardian.db");
+    }
+
+    /// <summary>A private, up-to-date copy of the live history for read-only users such as the MCP server.</summary>
+    public static Store OpenCopyOfLive()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "GuardianX-read", Environment.ProcessId.ToString());
+        return new Store(CopyLiveTo(folder));
+    }
 
     public string DbPath { get; }
     private readonly SqliteConnection _db;

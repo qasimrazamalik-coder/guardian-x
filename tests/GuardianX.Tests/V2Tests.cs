@@ -1,3 +1,4 @@
+using GuardianX.Core.Data;
 using GuardianX.Core.Apps;
 using GuardianX.Core.Assistant;
 using GuardianX.Core.Power;
@@ -130,5 +131,37 @@ public class AppTests
         Assert.Contains(tips, t => t.App == "Google Chrome" && t.Text.Contains("3.1 GB"));
         Assert.Contains(tips, t => t.App == "Visual Studio Code" && t.Text.Contains("4 W"));
         Assert.DoesNotContain(tips, t => t.App == "Host");
+    }
+
+    [Fact]
+    public void CopyOfLiveHasAllReadingsWhileTheAppKeepsItOpen()
+    {
+        var live = Path.Combine(Path.GetTempPath(), $"gx-live-{Guid.NewGuid():N}");
+        var copy = Path.Combine(Path.GetTempPath(), $"gx-copy-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(live);
+        try
+        {
+            var start = DateTimeOffset.Now.AddHours(-1);
+            using var app = new Store(Path.Combine(live, "guardian.db"));   // stays open in WAL mode, like the running app
+            for (int i = 0; i < 50; i++)
+                app.Add(new GuardianX.Core.Battery.BatterySnapshot(start.AddMinutes(i), 80 - i * 0.5, 50000, 62900, 70070, 54,
+                    -12000, 15900, null, false, false, "LION", "HP", "Primary"));
+            long liveBytes = new FileInfo(Path.Combine(live, "guardian.db")).Length;
+
+            var path = Store.CopyLiveTo(copy, live);
+            using (var reader = new Store(path))
+                Assert.Equal(50, reader.Samples(start.AddMinutes(-1), DateTimeOffset.Now).Count);
+
+            // The live database is untouched and still works.
+            Assert.Equal(liveBytes, new FileInfo(Path.Combine(live, "guardian.db")).Length);
+            Assert.Equal(50, app.SampleCount());
+            Assert.Equal("ok", app.IntegrityCheck());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(live, true); } catch { }
+            try { Directory.Delete(copy, true); } catch { }
+        }
     }
 }

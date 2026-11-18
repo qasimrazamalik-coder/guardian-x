@@ -22,7 +22,9 @@ await builder.Build().RunAsync();
 [McpServerToolType]
 public static class GuardianTools
 {
-    private static Store OpenStore() => new(); // the app's database, opened read-mostly in WAL mode
+    // Never open the live database from here: Claude Desktop may run this server inside its app package, where
+    // SQLite can't share the WAL index with Guardian X. Each call reads a fresh private copy instead.
+    private static Store OpenStore() => Store.OpenCopyOfLive();
 
     [McpServerTool, Description("Current battery state: charge %, charging or not, power in watts, health %, capacity, cycles, wear speed and temperature if reported.")]
     public static string GetBatteryStatus()
