@@ -38,34 +38,26 @@ internal static class DevTools
         monitor.Tick();
         var w = new MainWindow(monitor)
         {
+            StartPage = tab,
             WindowStartupLocation = WindowStartupLocation.Manual,
-            Left = -20000, Top = -20000, ShowInTaskbar = false, ShowActivated = false,
-            Height = tab == "overview" ? 1320 : 860
+            Left = -20000, Top = -20000, Width = 1440, Height = 920, ShowInTaskbar = false, ShowActivated = false,
         };
         w.Show();
-        if (tab == "history") w.TabHistory.IsChecked = true;
-        if (tab == "settings") w.TabSettings.IsChecked = true;
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        timer.Tick += (_, _) =>
+        _ = Finish();
+
+        async Task Finish()
         {
-            timer.Stop();
-            var content = (FrameworkElement)w.Content;
-            var dpi = VisualTreeHelper.GetDpi(w);
-            var bmp = new RenderTargetBitmap((int)(content.ActualWidth * dpi.DpiScaleX), (int)(content.ActualHeight * dpi.DpiScaleY),
-                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-            var bg = new DrawingVisual();
-            using (var dc = bg.RenderOpen())
-                dc.DrawRectangle((Brush)app.Resources["Bg"], null, new Rect(0, 0, content.ActualWidth, content.ActualHeight));
-            bmp.Render(bg);
-            bmp.Render(content);
-            var enc = new PngBitmapEncoder();
-            enc.Frames.Add(BitmapFrame.Create(bmp));
-            using (var f = File.Create(path)) enc.Save(f);
+            try
+            {
+                await w.Ready;
+                await Task.Delay(TimeSpan.FromSeconds(tab == "apps" ? 6 : 4)); // let data load and animations settle
+                await w.CaptureAsync(path);
+            }
+            catch (Exception e) { App.Log("Snapshot: " + e); }
             w.Close();
             monitor.Dispose();
             monitor.Store.Dispose();
             app.Shutdown();
-        };
-        timer.Start();
+        }
     }
 }

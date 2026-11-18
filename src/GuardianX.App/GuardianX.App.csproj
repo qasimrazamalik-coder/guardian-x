@@ -19,9 +19,14 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Velopack" Version="0.0.*" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.*" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\GuardianX.Core\GuardianX.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The built web interface (ui/ → wwwroot) ships next to the exe. -->
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\guardian.ico" />

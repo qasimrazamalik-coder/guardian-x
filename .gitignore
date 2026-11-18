@@ -9,3 +9,5 @@ publish/
 .claude/.skipper-*
 .skipper/*
 !.skipper/receipts/
+.claude/
+ui/node_modules/

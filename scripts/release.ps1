@@ -10,6 +10,10 @@ if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
 Remove-Item publish -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish src\GuardianX.App\GuardianX.App.csproj -c Release -r win-x64 --self-contained true -p:Version=$Version -o publish --nologo
 if ($LASTEXITCODE -ne 0) { throw "Publish failed" }
+# The MCP server ships in the same folder so Claude Desktop can launch it from the installed app.
+dotnet publish src\GuardianX.Mcp\GuardianX.Mcp.csproj -c Release -r win-x64 --self-contained true -p:Version=$Version -o publish --nologo
+if ($LASTEXITCODE -ne 0) { throw "MCP publish failed" }
+if (-not (Test-Path publish\wwwroot\index.html)) { throw "Web interface missing: run 'npm run build' in ui\" }
 vpk pack --packId GuardianX --packVersion $Version --packDir publish --mainExe GuardianX.exe `
   --packTitle "Guardian X" --packAuthors "Qasim Raza Malik" --icon src\GuardianX.App\Assets\guardian.ico `
   --shortcuts "Desktop,StartMenuRoot" --outputDir Releases
