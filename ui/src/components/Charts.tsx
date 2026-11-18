@@ -20,9 +20,10 @@ export interface Pt { t: number; v: number; flag?: boolean }
  * gaps where data is missing, and a crosshair tooltip.
  */
 export function TimeChart({ points, from, to, min = 0, max = 100, height = 220, band, bandLabel, maxGap, unit = '%', color = '#3de0ff', flagColor = '#ffb547',
-  dots, tickMode = 'hours', label }: {
+  dots, tickMode = 'hours', label, projection, projectionLabel, threshold, thresholdLabel }: {
   points: Pt[]; from: number; to: number; min?: number; max?: number; height?: number; band?: number; bandLabel?: string; maxGap: number
   unit?: string; color?: string; flagColor?: string; dots?: boolean; tickMode?: 'hours' | 'days'; label?: (p: Pt) => string
+  projection?: Pt[]; projectionLabel?: string; threshold?: number; thresholdLabel?: string
 }) {
   const [ref, w] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<Pt | null>(null)
@@ -78,7 +79,7 @@ export function TimeChart({ points, from, to, min = 0, max = 100, height = 220, 
           <g>
             <rect x={L} y={Y(max)} width={pw} height={Y(band) - Y(max)} fill="rgba(255,181,71,0.09)" />
             <line x1={L} x2={L + pw} y1={Y(band)} y2={Y(band)} stroke="rgba(255,181,71,0.35)" strokeDasharray="4 4" />
-            {bandLabel && <text x={L + pw - 6} y={Y(band) - 5} textAnchor="end" fontSize={10} fill="rgba(255,181,71,0.8)" fontFamily="var(--mono)">{bandLabel}</text>}
+            {bandLabel && <text x={L + 6} y={Y(band) + 13} textAnchor="start" fontSize={10} fill="rgba(255,181,71,0.75)" fontFamily="var(--mono)">{bandLabel}</text>}
           </g>
         )}
         {[0, 1, 2, 3, 4].map((i) => {
@@ -106,6 +107,24 @@ export function TimeChart({ points, from, to, min = 0, max = 100, height = 220, 
             </g>
           )
         })}
+        {threshold != null && (
+          <g>
+            <line x1={L} x2={L + pw} y1={Y(threshold)} y2={Y(threshold)} stroke="rgba(255,77,106,0.45)" strokeDasharray="3 5" />
+            {thresholdLabel && <text x={L + 6} y={Y(threshold) - 5} fontSize={10} fill="rgba(255,77,106,0.85)" fontFamily="var(--mono)">{thresholdLabel}</text>}
+          </g>
+        )}
+        {projection && projection.length >= 2 && (
+          <g>
+            <motion.path d={projection.map((p, j) => `${j ? 'L' : 'M'} ${X(p.t)} ${Y(p.v)}`).join(' ')} stroke="#9b8cff" strokeWidth={2} strokeDasharray="6 6" fill="none"
+              initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1, delay: 0.9 }} />
+            <circle cx={X(projection[projection.length - 1].t)} cy={Y(projection[projection.length - 1].v)} r={4} fill="#9b8cff" />
+            {projectionLabel && (() => {
+              const e = projection[projection.length - 1]
+              const x = X(e.t), anchor = x > L + pw - 140 ? 'end' : 'start'
+              return <text x={anchor === 'end' ? x - 8 : x + 8} y={Y(e.v) + 16} textAnchor={anchor} fontSize={10.5} fill="#b9aeff" fontFamily="var(--mono)">{projectionLabel}</text>
+            })()}
+          </g>
+        )}
         {dots && points.map((p) => <circle key={p.t} cx={X(p.t)} cy={Y(p.v)} r={2.6} fill={color} />)}
         {points.length > 0 && (() => {
           const p = points[points.length - 1]

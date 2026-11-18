@@ -1,11 +1,11 @@
 import { motion } from 'framer-motion'
-import { Activity, BatteryCharging, Cpu, Moon, Plug, Thermometer, Zap } from 'lucide-react'
+import { Activity, BatteryCharging, CalendarClock, Cpu, Gamepad2, Moon, Plug, Thermometer, Wand2, Zap } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { TimeChart } from '../components/Charts'
 import { Card, Counter, Eyebrow, Stat } from '../components/ui'
 import { BatteryCell, HealthRing, MiniGauge } from '../components/Visuals'
 import { call } from '../lib/bridge'
-import { duration, fmt, levelColor, minutes, time } from '../lib/format'
+import { duration, fmt, levelColor, minutes, monthYear, time } from '../lib/format'
 import type { Dashboard, DayPoint } from '../lib/types'
 
 export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
@@ -20,18 +20,18 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
   const wearMax = Math.max(b.wearPer100 ?? 0, typical) * 1.15
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '1.05fr 1fr', alignItems: 'start' }}>
+    <div className="grid ov-grid">
       {/* Health hero */}
       <Card glow style={{ gridRow: 'span 2' }}>
         <Eyebrow dot="var(--mint)">Battery health</Eyebrow>
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 26, alignItems: 'center' }}>
+        <div className="ov-hero">
           <HealthRing health={b.health} size={250} />
           <div className="grid" style={{ gap: 18 }}>
             <div>
               <div className="body">Holds</div>
               <div style={{ fontSize: 26, fontWeight: 600 }}><Counter value={b.fullWh} decimals={1} /> <span className="muted" style={{ fontSize: 15 }}>of {b.designWh.toFixed(1)} Wh</span></div>
             </div>
-            <div className="row" style={{ gap: 28 }}>
+            <div className="row" style={{ gap: 28, flexWrap: 'wrap' }}>
               <Stat label="Cycles" value={b.cycles} />
               <Stat label="Worn" value={fmt(b.wear)} unit="%" />
               <Stat label="Trend" value={b.wearPerMonth != null ? `−${fmt(b.wearPerMonth)}` : '—'} unit="%/mo" color={b.wearPerMonth && b.wearPerMonth > 1.5 ? 'var(--amber)' : undefined} />
@@ -57,7 +57,7 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
 
       {/* Live cell */}
       <Card delay={0.05}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 26, alignItems: 'center' }}>
+        <div className="ov-live">
           <BatteryCell percent={b.percent} charging={b.charging} onAc={b.onAc} width={112} height={200} />
           <div className="grid" style={{ gap: 16 }}>
             <div>
@@ -75,9 +75,9 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
       </Card>
 
       <Card delay={0.1}>
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <Eyebrow>Last 24 hours</Eyebrow>
-          <div className="row" style={{ gap: 14, marginBottom: 12 }}>
+          <div className="row" style={{ gap: 10, marginBottom: 12 }}>
             <span className="chip" style={{ color: 'var(--cyan)' }}>on charger</span>
             <span className="chip" style={{ color: 'var(--amber)' }}>on battery</span>
           </div>
@@ -87,7 +87,42 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
           label={(p) => `${new Date(p.t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} · ${p.v.toFixed(0)}% · ${p.flag ? 'battery' : 'charger'}`} />
       </Card>
 
-      <div className="grid" style={{ gridColumn: '1 / -1', gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      {d.forecast && (
+        <Card delay={0.12} style={{ gridColumn: '1 / -1' }}>
+          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <Eyebrow dot="var(--violet)"><CalendarClock size={13} aria-hidden /> Forecast</Eyebrow>
+            {(d.auto.last || d.auto.gaming) && (
+              <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                {d.auto.gaming && <span className="chip" style={{ color: 'var(--violet)' }}><Gamepad2 size={12} aria-hidden /> Game detected</span>}
+                {d.auto.last && <span className="chip" style={{ color: 'var(--muted)' }}><Wand2 size={12} aria-hidden /> {d.auto.last}</span>}
+              </div>
+            )}
+          </div>
+          <div className="forecast">
+            <div>
+              <div className="k">80% health</div>
+              <div className="v">{d.forecast.healthAt80On ? monthYear(d.forecast.healthAt80On) : b.health <= 80 ? 'Reached' : 'No trend yet'}</div>
+              <div className="body s">{d.forecast.monthsTo80 != null ? `About ${fmt(d.forecast.monthsTo80)} months at −${fmt(d.forecast.lossPerMonth)}%/month` : d.forecast.healthAt80On ? '' : 'Needs two weeks of history and a downward trend'}</div>
+            </div>
+            <div>
+              {(() => {
+                const f = d.forecast!
+                if (!b.onAc) return <><div className="k">Battery left</div><div className="v">{f.hoursToEmpty != null ? duration(f.hoursToEmpty) : '—'}</div><div className="body s">At the current power draw</div></>
+                if (f.hoursToLimit != null) return <><div className="k">To {d.mode.chargeLimit}% limit</div><div className="v">{duration(f.hoursToLimit)}</div><div className="body s">{f.hoursToFull != null ? `${duration(f.hoursToFull)} to 100% (slower above 80%)` : 'At the current charging power'}</div></>
+                if (f.hoursToFull != null) return <><div className="k">To full</div><div className="v">{duration(f.hoursToFull)}</div><div className="body s">The last 20% charges more slowly</div></>
+                return <><div className="k">Charge</div><div className="v">{b.percent >= 99 ? 'Full' : `Holding at ${Math.round(b.percent)}%`}</div><div className="body s">{b.percent >= 99 ? 'Unplug for a while if you don\'t need 100%' : 'Not charging right now'}</div></>
+              })()}
+            </div>
+            <div>
+              <div className="k">At 11 pm</div>
+              <div className="v">{d.forecast.percentAtNight != null ? `${d.forecast.percentAtNight}%` : b.onAc ? 'On charger' : '—'}</div>
+              <div className="body s">{d.forecast.percentAtNight != null ? (d.forecast.percentAtNight < 20 ? 'Plug in before then' : 'If you keep using it like this') : 'Shown when you run on battery before 11 pm'}</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <div className="grid ov-row4" style={{ gridColumn: '1 / -1' }}>
         <Card delay={0.15}>
           <Eyebrow><Activity size={13} /> Stress today</Eyebrow>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
@@ -122,9 +157,9 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
       </div>
 
       <Card delay={0.28} style={{ gridColumn: '1 / -1' }}>
-        <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <Eyebrow><Zap size={13} /> What to do</Eyebrow>
-          <div className="row" style={{ gap: 10, marginBottom: 12 }}>
+          <div className="row" style={{ gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
             <button className="chip" style={{ color: 'var(--mint)' }} onClick={() => go('charging')}><BatteryCharging size={12} /> {d.mode.name} mode · {d.mode.resumeAt}–{d.mode.chargeLimit}%</button>
             <button className="chip" style={{ color: d.plug.configured ? 'var(--cyan)' : 'var(--muted)' }} onClick={() => go('charging')}><Thermometer size={12} /> {d.plug.configured ? d.plug.status : 'No smart plug'}</button>
           </div>

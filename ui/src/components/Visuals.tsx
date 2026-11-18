@@ -39,16 +39,16 @@ export function HealthRing({ health, size = 260 }: { health: number; size?: numb
         <path d={arc(0, sweep)} stroke="rgba(160,200,230,0.08)" strokeWidth={stroke} fill="none" strokeLinecap="round" />
         <motion.path d={arc(0, sweep)} stroke="url(#ring)" strokeWidth={stroke} fill="none" strokeLinecap="round" filter="url(#glow)"
           initial={{ pathLength: 0 }} animate={{ pathLength: h / 100 }} transition={{ duration: 1.6, ease: [0.2, 0.8, 0.2, 1] }} />
-        <line x1={c + (r - stroke) * Math.cos(tick)} y1={c + (r - stroke) * Math.sin(tick)} x2={c + (r + stroke) * Math.cos(tick)} y2={c + (r + stroke) * Math.sin(tick)}
+        <line x1={c + (r - stroke * 0.55) * Math.cos(tick)} y1={c + (r - stroke * 0.55) * Math.sin(tick)} x2={c + (r + stroke * 0.85) * Math.cos(tick)} y2={c + (r + stroke * 0.85) * Math.sin(tick)}
           stroke="rgba(234,242,248,0.7)" strokeWidth={2} />
         <text x={c + (r + stroke * 1.9) * Math.cos(tick)} y={c + (r + stroke * 1.9) * Math.sin(tick)} fill="rgba(234,242,248,0.5)" fontSize={10} fontFamily="var(--mono)" textAnchor="middle">80</text>
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
         <div>
-          <div style={{ fontSize: size * 0.21, fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1 }}>
+          <div style={{ fontSize: size * 0.19, fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1 }}>
             <Counter value={h} decimals={1} /><span style={{ fontSize: size * 0.08, color: 'var(--muted)', marginLeft: 2 }}>%</span>
           </div>
-          <div className="eyebrow" style={{ justifyContent: 'center', margin: '8px 0 0' }}>battery health</div>
+          <div className="eyebrow" style={{ justifyContent: 'center', margin: '8px 0 0', fontSize: Math.max(9, size * 0.036), letterSpacing: '0.12em' }}>health</div>
         </div>
       </div>
     </div>

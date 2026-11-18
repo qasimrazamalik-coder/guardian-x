@@ -35,7 +35,7 @@ export function Charging({ d, refresh }: { d: Dashboard; refresh: () => void }) 
   }
 
   return (
-    <div className="grid" style={{ gridTemplateColumns: '1.25fr 1fr', alignItems: 'start' }}>
+    <div className="grid charging-grid">
       <Card glow>
         <Eyebrow dot="var(--mint)">Charge window · {mode.name} mode</Eyebrow>
         <div style={{ position: 'relative', height: 74, marginTop: 8 }}>
@@ -48,7 +48,7 @@ export function Charging({ d, refresh }: { d: Dashboard; refresh: () => void }) 
         <div className="body" style={{ marginTop: 12 }}>
           With a smart plug, Guardian X stops charging at <b style={{ color: 'var(--mint)' }}>{mode.chargeLimit}%</b> and starts again at <b style={{ color: 'var(--mint)' }}>{mode.resumeAt}%</b>. Without one it alerts you with a sound to unplug.
         </div>
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginTop: 18, gap: 12 }}>
+        <div className="grid mode-cards">
           {modes.map((m) => {
             const on = m.id === mode.id
             return (

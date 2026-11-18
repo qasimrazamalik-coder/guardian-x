@@ -16,3 +16,5 @@ export const healthColor = (h: number) => (h >= 90 ? 'var(--mint)' : h >= 80 ? '
 
 export const levelColor = (l: string) =>
   l === 'Alert' || l === 'High' ? 'var(--red)' : l === 'Warn' || l === 'Medium' ? 'var(--amber)' : l === 'Info' ? 'var(--cyan)' : 'var(--mint)'
+
+export const monthYear = (iso: string) => new Date(iso.length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })

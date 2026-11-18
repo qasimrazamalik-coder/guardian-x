@@ -24,8 +24,15 @@ export interface Dashboard {
   plug: PlugState
   chargeLimitOn: boolean
   chargeToFull: boolean
+  forecast: Forecast | null
+  auto: { last: string | null; gaming: boolean; quiet: boolean }
   error: string | null
   version: string
+}
+
+export interface Forecast {
+  healthNow: number; lossPerMonth: number | null; healthAt80On: string | null; monthsTo80: number | null
+  hoursToEmpty: number | null; hoursToFull: number | null; hoursToLimit: number | null; percentAtNight: number | null; basis: string
 }
 
 export interface DayPoint { t: string; p: number; ac: boolean; w: number | null }
@@ -35,6 +42,7 @@ export interface History {
   trendPerMonth: number | null
   biggestDrop: { from: string; to: string; lost: number } | null
   chargerHours: number | null
+  forecast: Forecast | null
   days: { day: string; health: number; cycles: number; stress: number; level: string; hoursFull: number; lowest: number }[]
   gpuWeek: { app: string; times: number }[]
 }
@@ -48,19 +56,26 @@ export interface Analytics {
   sampleDays: number
 }
 
-export interface AppUsage { key: string; name: string; processes: number; memoryMb: number; cpuPercent: number; diskMbPerSec: number; estimatedWatts: number | null; kind: string }
-export interface AppsReport { apps: AppUsage[]; onBattery: boolean; totalRamGb: number; usedRamGb: number; cpuTotal: number; tips: { app: string; text: string }[] }
+export interface AppUsage { key: string; name: string; processes: number; memoryMb: number; cpuPercent: number; diskMbPerSec: number; estimatedWatts: number | null; kind: string; efficiency: boolean; canThrottle: boolean }
+export interface AppsReport { apps: AppUsage[]; onBattery: boolean; autoEfficiency: boolean; totalRamGb: number; usedRamGb: number; cpuTotal: number; tips: { app: string; text: string }[] }
 export interface Storage { drives: { name: string; label: string; totalGb: number; freeGb: number }[]; largestApps: { name: string; sizeGb: number; publisher: string }[]; tempGb: number }
 
 export interface Settings {
   startWithWindows: boolean; notifyFullHold: boolean; fullHoldMinutes: number; notifyLow: boolean; lowPercent: number
   notifyHigh: boolean; highPercent: number; notifySleepDrain: boolean; notifyGpu: boolean
   soundsOn: boolean; soundPack: string; plugSounds: boolean; mode: string; applyPowerMode: boolean; chargeLimitOn: boolean
-  chatModel: string; embedModel: string
+  quietHoursOn: boolean; quietFrom: number; quietTo: number
+  autoModeOnPower: boolean; acMode: string; batteryMode: string; autoGamingMode: boolean; autoEfficiencyOnBattery: boolean
+  efficiencyApps: string[]; weeklyReportOn: boolean; widgetOn: boolean; packs: string[]
 }
 
 export interface PlugConfig { kind: string; host: string; username: string; hasPassword: boolean }
 
-export interface AssistantStatus { installed: boolean; running: boolean; chatModelReady: boolean; embedModelReady: boolean; chatModel: string; embedModel: string; modelsFolder: string }
+export interface AssistantStatus { ready: boolean; engine: string; sections: number }
+
+export interface TempSummary { sizeGb: number; files: number; recycleBinGb: number; recycleBinItems: number }
+export interface BigFile { path: string; name: string; sizeGb: number; modified: string }
+export interface StartupApp { id: string; name: string; command: string; location: string; enabled: boolean; canChange: boolean }
+export interface ReportFile { name: string; date: string }
 
 export interface McpInfo { exePath: string; connected: boolean; configs: string[] }

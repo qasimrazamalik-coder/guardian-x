@@ -13,7 +13,7 @@ public enum Cue { Charged, Low, Unplugged, PluggedIn, Alert }
 public static class Sounds
 {
     public const int Rate = 44100;
-    public const int Version = 2; // bump to regenerate files after a sound change
+    public const int Version = 3; // bump to regenerate files after a sound change
     public static readonly string[] Packs = { "aurora", "crystal", "pulse", "nebula" };
 
     public static string Folder => Path.Combine(Data.Store.DefaultFolder, "sounds");
@@ -74,13 +74,13 @@ public static class Sounds
     private static Voice VoiceFor(string pack) => pack switch
     {
         // Glassy chime: sine with a soft FM sheen and gentle second partial; long, lush room.
-        "aurora" => new(0.006, 2.6, 0.55, 0.06, 0.82, 0.32, (f, t, ph) =>
+        "aurora" => new(0.012, 2.6, 0.55, 0.06, 0.82, 0.32, (f, t, ph) =>
             Math.Sin(ph + 0.9 * Math.Exp(-t * 6) * Math.Sin(ph * 2.0)) + 0.22 * Math.Sin(ph * 2.0) * Math.Exp(-t * 3) + 0.08 * Math.Sin(ph * 3.0) * Math.Exp(-t * 5)),
         // Glass bell: inharmonic partials of a struck bar, each decaying at its own rate.
-        "crystal" => new(0.002, 2.2, 0.85, 0.02, 0.7, 0.26, (f, t, ph) =>
+        "crystal" => new(0.004, 2.2, 0.85, 0.02, 0.7, 0.26, (f, t, ph) =>
             Math.Sin(ph) + 0.5 * Math.Sin(ph * 2.756) * Math.Exp(-t * 4) + 0.28 * Math.Sin(ph * 5.404) * Math.Exp(-t * 9) + 0.12 * Math.Sin(ph * 8.933) * Math.Exp(-t * 16)),
         // Modern pluck: band-limited saw shape that closes quickly, with a sub an octave down; tight room.
-        "pulse" => new(0.003, 5.5, 0.7, 0.1, 0.45, 0.18, (f, t, ph) =>
+        "pulse" => new(0.005, 5.5, 0.7, 0.1, 0.45, 0.18, (f, t, ph) =>
         {
             double v = 0;
             int harmonics = (int)Math.Clamp(9000 / f, 1, 12);
@@ -102,8 +102,7 @@ public static class Sounds
         int frames = (int)((notes.Max(n => n.Start + n.Length) + tail) * Rate);
         var left = new double[frames];
         var right = new double[frames];
-        var rng = new Random(cue.GetHashCode() * 31 + pack.Length);
-
+        
         foreach (var n in notes)
         {
             double f = Hz(n.Midi);
@@ -116,7 +115,7 @@ public static class Sounds
             for (int v = 0; v < 3; v++)
             {
                 double fv = f * Math.Pow(2, cents[v] / 1200.0);
-                double phase = rng.NextDouble() * 2 * Math.PI;
+                double phase = v * 0.7; // small fixed offsets: voices don't start in lockstep, and no step at the onset
                 double panL = Math.Cos((Math.Clamp(pans[v], -1, 1) + 1) * Math.PI / 4), panR = Math.Sin((Math.Clamp(pans[v], -1, 1) + 1) * Math.PI / 4);
                 lp = 0;
                 for (int i = 0; i < len && s0 + i < frames; i++)
@@ -149,8 +148,16 @@ public static class Sounds
             peak = Math.Max(peak, Math.Max(Math.Abs(left[i]), Math.Abs(right[i])));
         }
         double norm = 0.707 / peak;
-        var output = new float[frames * 2];
-        for (int i = 0; i < frames; i++) { output[2 * i] = (float)(left[i] * norm); output[2 * i + 1] = (float)(right[i] * norm); }
+        // Trim the silent end (below about -66 dB) but keep 60 ms of air.
+        int last = frames - 1;
+        while (last > 0 && Math.Max(Math.Abs(left[last]), Math.Abs(right[last])) * norm < 0.0005) last--;
+        int keep = Math.Min(frames, last + (int)(0.06 * Rate));
+        var output = new float[keep * 2];
+        for (int i = 0; i < keep; i++)
+        {
+            double g = i > keep - 0.06 * Rate ? (keep - i) / (0.06 * Rate) : 1;
+            output[2 * i] = (float)(left[i] * norm * g); output[2 * i + 1] = (float)(right[i] * norm * g);
+        }
         return output;
     }
 

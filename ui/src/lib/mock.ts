@@ -1,5 +1,5 @@
 // Preview data for running the UI in a normal browser. Shaped from real readings of the developer's OMEN 16.
-import type { Analytics, AppsReport, Dashboard, DayPoint, History, Storage } from './types'
+import type { Analytics, AppsReport, BigFile, Dashboard, DayPoint, History, StartupApp, Storage } from './types'
 
 const modes = [
   { id: 'desk', name: 'Desk', description: 'Plugged in most of the day. Keeps the battery between 60% and 80%.', overlay: 'Balanced', chargeLimit: 80, resumeAt: 60, gpuAlerts: true },
@@ -35,8 +35,10 @@ function dashboard(): Dashboard {
       : { configured: true, name: plug.kind === 'simulated' ? 'Simulated plug' : `${plug.kind} at ${plug.host}`, on: plugOn, status: plugOn ? 'On, charging allowed' : 'Off, holding the battery', lastAction: null },
     chargeLimitOn: true,
     chargeToFull: false,
+    forecast: { healthNow: 89.7, lossPerMonth: 3.3, healthAt80On: '2027-02-15', monthsTo80: 2.9, hoursToEmpty: null, hoursToFull: null, hoursToLimit: null, percentAtNight: null, basis: 'Health trend measured over 120 days; live times use the current 0.0 W.' },
+    auto: { last: '14:02 Switched to Desk mode (charger connected).', gaming: false, quiet: false },
     error: null,
-    version: '2.0.0',
+    version: '2.1.0',
   }
 }
 
@@ -69,6 +71,7 @@ function history(): History {
     trendPerMonth: 3.3,
     biggestDrop: { from: '2026-10-05', to: '2026-10-19', lost: 7.4 },
     chargerHours: 16.3,
+    forecast: { healthNow: 89.7, lossPerMonth: 3.3, healthAt80On: '2027-02-15', monthsTo80: 2.9, hoursToEmpty: null, hoursToFull: null, hoursToLimit: null, percentAtNight: null, basis: '' },
     days: [
       { day: '2026-11-18', health: 89.7, cycles: 54, stress: 34, level: 'Medium', hoursFull: 5.6, lowest: 100 },
       { day: '2026-11-17', health: 89.1, cycles: 54, stress: 61, level: 'High', hoursFull: 10.2, lowest: 64 },
@@ -110,8 +113,9 @@ function apps(): AppsReport {
     apps: base.map(([key, name, procs, mem, cpu, disk, kind]) => ({
       key, name, processes: procs, memoryMb: Math.round(jitter(mem)), cpuPercent: Math.round(jitter(cpu) * 10) / 10,
       diskMbPerSec: Math.round(jitter(disk) * 100) / 100, estimatedWatts: null, kind,
+      efficiency: efficient.has(key), canThrottle: kind !== 'system',
     })),
-    onBattery: false, totalRamGb: 31.6, usedRamGb: 14.2, cpuTotal: 18,
+    onBattery: false, autoEfficiency: true, totalRamGb: 31.6, usedRamGb: 14.2, cpuTotal: 18,
     tips: [{ app: 'Google Chrome', text: 'Google Chrome is using 3.4 GB of RAM across 31 processes. Turn on sleeping tabs / Efficiency mode in its settings, and close tabs you\'re not reading.' }],
   }
 }
@@ -123,6 +127,22 @@ function storage(): Storage {
     tempGb: 0.55,
   }
 }
+
+const efficient = new Set<string>(['Discord'])
+let startup: StartupApp[] = [
+  { id: 'user|Discord', name: 'Discord', command: '"C:\\Users\\you\\AppData\\Local\\Discord\\Update.exe" --processStart Discord.exe', location: 'user', enabled: true, canChange: true },
+  { id: 'user|Spotify', name: 'Spotify', command: '"C:\\Users\\you\\AppData\\Roaming\\Spotify\\Spotify.exe" /minimized', location: 'user', enabled: false, canChange: true },
+  { id: 'user|GuardianX', name: 'GuardianX', command: '"C:\\Users\\you\\AppData\\Local\\GuardianX\\current\\GuardianX.exe" --background', location: 'user', enabled: true, canChange: true },
+  { id: 'all users|OMEN Command Center', name: 'OMEN Command Center', command: 'C:\\Program Files\\HP\\OMEN\\OmenCC.exe', location: 'all users', enabled: true, canChange: false },
+  { id: 'all users|SecurityHealth', name: 'SecurityHealth', command: '%windir%\\system32\\SecurityHealthSystray.exe', location: 'all users', enabled: true, canChange: false },
+]
+const bigFiles: BigFile[] = [
+  { path: 'D:\\Downloads\\Win11_24H2_English_x64.iso', name: 'Win11_24H2_English_x64.iso', sizeGb: 5.43, modified: '2026-09-02T10:00:00' },
+  { path: 'D:\\Videos\\Gameplay 2026-10-11.mp4', name: 'Gameplay 2026-10-11.mp4', sizeGb: 3.12, modified: '2026-10-11T22:14:00' },
+  { path: 'C:\\Users\\you\\Downloads\\Android Studio.exe', name: 'Android Studio.exe', sizeGb: 1.18, modified: '2026-08-20T09:00:00' },
+]
+let settingsState: any = null
+let assistantTopic = ''
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -140,15 +160,54 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
     case 'plugGet': return { config: plug, state: dashboard().plug }
     case 'plugSave': plug = { kind: params.kind, host: params.host, username: params.username, hasPassword: !!params.password }; plugOn = true; return dashboard().plug
     case 'plugSet': plugOn = params.on; return dashboard().plug
-    case 'settingsGet': return { startWithWindows: true, notifyFullHold: true, fullHoldMinutes: 120, notifyLow: true, lowPercent: 20, notifyHigh: true, highPercent: 80, notifySleepDrain: true, notifyGpu: true, soundsOn: true, soundPack: 'nebula', plugSounds: true, mode, applyPowerMode: true, chargeLimitOn: true, chatModel: 'qwen2.5:7b', embedModel: 'nomic-embed-text' }
-    case 'assistantStatus': return { installed: true, running: true, chatModelReady: true, embedModelReady: true, chatModel: 'qwen2.5:7b', embedModel: 'nomic-embed-text', modelsFolder: 'E:\\GuardianX\\ollama-models' }
+    case 'settingsGet':
+      settingsState ??= {
+        startWithWindows: true, notifyFullHold: true, fullHoldMinutes: 120, notifyLow: true, lowPercent: 20, notifyHigh: true, highPercent: 80,
+        notifySleepDrain: true, notifyGpu: true, soundsOn: true, soundPack: 'aurora', plugSounds: true, mode, applyPowerMode: true, chargeLimitOn: true,
+        quietHoursOn: true, quietFrom: 23, quietTo: 7, autoModeOnPower: true, acMode: 'desk', batteryMode: 'saver', autoGamingMode: true,
+        autoEfficiencyOnBattery: true, efficiencyApps: [...efficient], weeklyReportOn: true, widgetOn: false, packs: ['aurora', 'crystal', 'pulse', 'nebula'],
+      }
+      return { ...settingsState, mode }
+    case 'settingsSave': settingsState = { ...settingsState, ...params }; return { ok: true }
+    case 'assistantStatus': return { ready: true, engine: 'local', sections: 41 }
+    case 'setEfficiency': if (params.on) efficient.add(params.app); else efficient.delete(params.app); return { ok: true, message: params.on ? 'Efficiency mode on for 7 processes. Guardian X keeps it on while you\'re on battery.' : 'Efficiency mode off.' }
+    case 'tempScan': return { sizeGb: 0.55, files: 1834, recycleBinGb: 2.1, recycleBinItems: 37 }
+    case 'tempClean': return { ok: true, message: 'Freed 0.49 GB (1,702 files). 132 files in use were left alone.' }
+    case 'emptyRecycleBin': return { ok: true, message: 'Emptied the Recycle Bin and freed 2.10 GB.' }
+    case 'bigFiles': await delay(900); return bigFiles
+    case 'startupList': return startup
+    case 'startupSet': startup = startup.map((a) => (a.id === params.id ? { ...a, enabled: params.enabled } : a)); return startup
+    case 'reportsList': return [{ name: 'guardian-x-week-2026-11-16.html', date: '2026-11-16T09:12:00' }, { name: 'guardian-x-week-2026-11-09.html', date: '2026-11-09T09:03:00' }]
+    case 'weeklyReport': return { ok: true, message: 'Report saved and opened in your browser.' }
     case 'mcpInfo': return { exePath: 'C:\\Users\\you\\AppData\\Local\\GuardianX\\current\\GuardianX.Mcp.exe', connected: false, configs: [] }
     case 'ask': {
-      const text = "Because sitting at 100% while warm is what ages a lithium battery fastest. Your OMEN was switched on and plugged in about 16.3 hours a day last week, and right now it has been at 100% on the charger for 3 h 34 min [K1].\n\nWhat helps:\n• Use Desk mode with a smart plug so it stays between 60% and 80%.\n• Unplug and run it down to about 40% a few times a week.\n• Keep the vents clear when gaming — your biggest drop (7.4%, 5–19 Oct) came in weeks with little charger time, so heat is likely part of it [K2]."
+      const q = String(params.question).toLowerCase()
+      const topic = /plug|charger|100/.test(q) ? 'plugged' : /app|drain|ram/.test(q) ? 'apps' : /80%|when|forecast/.test(q) ? 'forecast' : /drop/.test(q) ? 'drop' : (q.split(' ').length <= 3 && /why|how|more/.test(q) && assistantTopic) ? assistantTopic : 'health'
+      assistantTopic = topic
+      const answers: Record<string, string> = {
+        plugged: "Keeping it plugged in isn't dangerous, but it ages the battery faster. A lithium battery wears quickest when it sits at a high charge and is warm, and a gaming laptop on the charger is usually at 100% with the CPU and GPU heating it.\n\nYour laptop has been switched on and plugged in about 16.3 hours a day over the last week (Windows' records).\nYour biggest capacity drop was 7.4% between 5 Oct and 19 Oct.\n\nWhat helps most:\n1. Hold it between 40% and 80%. HP doesn't offer a charge limit on OMEN laptops, so the reliable way is a TP-Link Tapo or Shelly smart plug that Guardian X switches for you (Charging page). Without one, unplug when the 80% alert sounds.\n2. Keep it cool: hard surface, clear vents, and Balanced or Efficiency power mode when you aren't gaming.\n3. Charge to 100% only before you need the full runtime (Travel mode, or Charge to full now).\n\nWhy: When a laptop stays on the charger it usually holds the battery at or near 100%. High state of charge plus heat speeds up the side reactions that permanently reduce capacity.",
+        apps: "Busiest right now (you're on the charger, so these are by CPU):\n• Google Chrome: 6.2% CPU, 3.4 GB RAM\n• Visual Studio Code: 4.1% CPU, 1.6 GB RAM\n• Claude: 2.6% CPU, 1.1 GB RAM\n• Discord: 1.8% CPU, 0.8 GB RAM\n• Spotify: 0.9% CPU, 0.4 GB RAM\n\nOver the last 7 days on battery: Google Chrome about 14.2 Wh, Discord about 6.1 Wh, Visual Studio Code about 5.4 Wh.\n\nTip: Apps & storage > Efficiency mode lets Windows run a background app on low-power cores while you're on battery.",
+        forecast: "At your measured rate (about 3.3% a month) the battery reaches 80% health around February 2027, about 2.9 months from now.\n80% is the usual point where people consider a replacement. It still works below that, just with less runtime.\nSlow that by keeping it under 80% charge and cool. Even halving the wear rate would roughly double that time.",
+        drop: "Your biggest drop was 7.4% of design capacity between 5 Oct and 19 Oct 2026.\nIn Windows' records for that time the laptop averaged 9.1 h a day plugged in and 1.4 h on battery, and used about 13 cycles.\nThat's less charger time than your current 16.3 h a day, so being plugged in wasn't the main cause. Heat (gaming or heavy work) and deep discharges are the usual suspects.",
+        health: "Battery health is 89.7% (good): it holds 62.9 Wh of its 70.1 Wh design capacity after 54 cycles.\nThat's 19% wear per 100 cycles, against about 4% for a typical battery, so it's ageing faster than its use explains. Time at 100% and heat cause that, not cycles.\nOver the last 120 days it has lost about 3.3% of capacity a month.\nThe biggest drop was 7.4% between 5 Oct and 19 Oct.\nIf that trend continues, it reaches 80% health around February 2027.",
+      }
+      const follow: Record<string, string[]> = {
+        plugged: ['How do I set up the 80% limit with a Tapo plug?', 'What caused my biggest battery drop?', 'When will my battery reach 80% health?'],
+        apps: ['How can I make my battery last longer?', 'Is the NVIDIA GPU awake?', 'How much storage do I have?'],
+        forecast: ['How can I make my battery last longer?', 'Why shouldn\'t I keep it plugged in?'],
+        drop: ['Why shouldn\'t I keep it plugged in?', 'How hot does my battery get?'],
+        health: ['What caused my biggest battery drop?', 'When will my battery reach 80% health?'],
+      }
+      const text = answers[topic]
       const id = params.id
       ;(async () => {
-        for (const word of text.split(/(\s+)/)) { await delay(18); emit('chat', { id, delta: word }) }
-        emit('chat', { id, done: true, sources: ['How laptop batteries wear out: Why keeping it plugged in all the time is not ideal', 'How laptop batteries wear out: Heat'] })
+        const parts = text.split(/(?<=\s)/)
+        let chunk = ''
+        for (let i = 0; i < parts.length; i++) {
+          chunk += parts[i]
+          if (chunk.length >= 18 || i === parts.length - 1) { await delay(14); emit('chat', { id, delta: chunk }); chunk = '' }
+        }
+        emit('chat', { id, done: true, sources: ['Your Guardian X data', 'How laptop batteries wear out: Why keeping it plugged in all the time is not ideal'], followUps: follow[topic], topic })
       })()
       return { ok: true }
     }
