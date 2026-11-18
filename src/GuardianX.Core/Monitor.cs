@@ -45,8 +45,9 @@ public sealed class Settings
     public bool WeeklyReportOn { get; set; } = true;
     public string LastWeeklyReport { get; set; } = "";
     public bool WidgetOn { get; set; }
-    public double WidgetLeft { get; set; } = double.NaN;
-    public double WidgetTop { get; set; } = double.NaN;
+    // Null until the widget has been placed (NaN can't be written as JSON).
+    public double? WidgetLeft { get; set; }
+    public double? WidgetTop { get; set; }
 
     public bool IsQuiet(DateTime now) =>
         QuietHoursOn && QuietFrom != QuietTo &&

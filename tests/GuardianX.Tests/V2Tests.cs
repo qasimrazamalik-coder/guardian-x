@@ -267,6 +267,28 @@ public class SettingsTests
     }
 
     [Fact]
+    public void DefaultAndEditedSettingsSaveAndLoad()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"gx-set-{Guid.NewGuid():N}");
+        var before = Environment.GetEnvironmentVariable("GUARDIANX_DATA");
+        Environment.SetEnvironmentVariable("GUARDIANX_DATA", dir);
+        try
+        {
+            new Settings().Save();                                   // every default must be writable as JSON
+            var s = Settings.Load();
+            Assert.Null(s.WidgetLeft);
+            s.WidgetLeft = 1200; s.WidgetTop = 40; s.QuietHoursOn = true; s.EfficiencyApps.Add("msedge"); s.SoundPack = "crystal";
+            s.Save();
+            var back = Settings.Load();
+            Assert.Equal(1200, back.WidgetLeft);
+            Assert.True(back.QuietHoursOn);
+            Assert.Contains("msedge", back.EfficiencyApps);
+            Assert.Equal("crystal", back.SoundPack);
+        }
+        finally { Environment.SetEnvironmentVariable("GUARDIANX_DATA", before); try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
     public void WindowsAndGuardianXAreNeverThrottled()
     {
         Assert.False(EfficiencyMode.Allowed("explorer"));

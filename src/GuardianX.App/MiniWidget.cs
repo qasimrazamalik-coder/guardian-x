@@ -73,7 +73,7 @@ public sealed class MiniWidget : Window
     private void Place()
     {
         var area = SystemParameters.WorkArea;
-        double l = _monitor.Settings.WidgetLeft, t = _monitor.Settings.WidgetTop;
+        double l = _monitor.Settings.WidgetLeft ?? double.NaN, t = _monitor.Settings.WidgetTop ?? double.NaN;
         bool valid = !double.IsNaN(l) && !double.IsNaN(t) && l >= SystemParameters.VirtualScreenLeft - 50 &&
                      l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 60 &&
                      t >= SystemParameters.VirtualScreenTop - 20 && t < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 40;
