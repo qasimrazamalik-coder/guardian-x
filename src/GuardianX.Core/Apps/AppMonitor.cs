@@ -70,8 +70,8 @@ public sealed class AppMonitor
                     string path = "";
                     try { cpu = p.TotalProcessorTime; } catch { }
                     try { if (GetProcessIoCounters(p.Handle, out var c)) io = c.ReadTransferCount + c.WriteTransferCount; } catch { }
-                    if (!_names.ContainsKey(name) && !groups.ContainsKey(name))
-                        try { path = p.MainModule?.FileName ?? ""; } catch { }
+                    if (!_names.ContainsKey(name) && groups.GetValueOrDefault(name).path is null or "")
+                        path = ImagePath(p.Id);
                     current[p.Id] = new Last(cpu, io);
 
                     double cpuDelta = 0, ioDelta = 0;
@@ -81,7 +81,7 @@ public sealed class AppMonitor
                         ioDelta = io >= prev.Io ? io - prev.Io : 0;
                     }
                     var g = groups.GetValueOrDefault(name);
-                    groups[name] = (g.procs + 1, g.mem + mem, g.cpuSec + cpuDelta, g.ioBytes + ioDelta, g.path == "" ? path : g.path);
+                    groups[name] = (g.procs + 1, g.mem + mem, g.cpuSec + cpuDelta, g.ioBytes + ioDelta, string.IsNullOrEmpty(g.path) ? path : g.path);
                 }
                 catch { }
                 finally { p.Dispose(); }
@@ -115,9 +115,41 @@ public sealed class AppMonitor
     public static string KindOf(string processName) =>
         Browsers.Contains(processName) ? "browser" : SystemNames.Contains(processName) ? "system" : "app";
 
+    private static readonly Dictionary<string, string> KnownNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["msedge"] = "Microsoft Edge", ["msedgewebview2"] = "Edge WebView2 (apps)", ["chrome"] = "Google Chrome",
+        ["firefox"] = "Firefox", ["brave"] = "Brave", ["opera"] = "Opera", ["claude"] = "Claude", ["node"] = "Node.js",
+        ["Code"] = "Visual Studio Code", ["explorer"] = "File Explorer", ["dwm"] = "Desktop Window Manager",
+        ["Taskmgr"] = "Task Manager", ["powershell"] = "Windows PowerShell", ["pwsh"] = "PowerShell", ["cmd"] = "Command Prompt",
+        ["dotnet"] = ".NET", ["Discord"] = "Discord", ["Teams"] = "Microsoft Teams", ["ms-teams"] = "Microsoft Teams",
+        ["GuardianX"] = "Guardian X", ["MsMpEng"] = "Microsoft Defender", ["svchost"] = "Windows services",
+    };
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool QueryFullProcessImageName(IntPtr process, int flags, System.Text.StringBuilder name, ref int size);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>The exe path with the least access Windows allows (works for many processes MainModule can't open).</summary>
+    private static string ImagePath(int pid)
+    {
+        var h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+        if (h == IntPtr.Zero) return "";
+        try
+        {
+            var sb = new System.Text.StringBuilder(1024);
+            int size = sb.Capacity;
+            return QueryFullProcessImageName(h, 0, sb, ref size) ? sb.ToString(0, size) : "";
+        }
+        finally { CloseHandle(h); }
+    }
+
     private string FriendlyName(string key, string path)
     {
         if (_names.TryGetValue(key, out var n)) return n;
+        if (KnownNames.TryGetValue(key, out var known)) return _names[key] = known;
         string name = key;
         try
         {
@@ -128,7 +160,7 @@ public sealed class AppMonitor
             }
         }
         catch { }
-        _names[key] = name;
+        if (path != "") _names[key] = name; // retry next time if no process would give us its path
         return name;
     }
 
