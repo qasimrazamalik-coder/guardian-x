@@ -17,6 +17,7 @@ public partial class App : Application
     private MainWindow? _window;
     private EventWaitHandle? _showSignal;
     private DateTimeOffset _mutedUntil = DateTimeOffset.MinValue;
+    private bool _toldAboutTray;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -99,7 +100,16 @@ public partial class App : Application
         if (_window is null)
         {
             _window = new MainWindow(Monitor);
-            _window.Closed += (_, _) => _window = null;
+            _window.Closed += (_, _) =>
+            {
+                _window = null;
+                if (!_toldAboutTray)
+                {
+                    _toldAboutTray = true;
+                    _tray.ShowBalloonTip(5000, "Guardian X is still watching",
+                        "It keeps recording from the tray. Right-click the shield icon to quit.", Forms.ToolTipIcon.None);
+                }
+            };
         }
         _window.Show();
         if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;

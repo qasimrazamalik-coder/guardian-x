@@ -133,11 +133,11 @@ public static class BatteryInsights
             tips.Add(new Tip(TipLevel.Alert, "Your battery is ageing from time, not use",
                 $"It has lost {wear.WearPercent:0.#}% in {wear.Cycles} cycles, about {w:0.#}% per 100 cycles. " +
                 $"A typical battery loses about {TypicalWearPer100Cycles:0}% per 100 cycles. That pattern usually means hours " +
-                "spent at 100% on the charger and heat from gaming. Capping the charge at 80% is the biggest fix."));
+                "spent at 100% on the charger and heat from gaming. Unplugging when you don't need a full battery is the biggest fix."));
         if (fullHoldMinutes >= 60)
             tips.Add(new Tip(TipLevel.Warn, $"At 100% on the charger for {FormatMinutes(fullHoldMinutes)}",
-                "Sitting full and warm is what ages a lithium battery fastest. Turn on HP's Adaptive Battery Optimizer " +
-                "in the BIOS, or unplug for a while when you don't need full charge."));
+                "Sitting full and warm is what ages a lithium battery fastest. Your OMEN has no fixed 80% limit, so " +
+                "unplugging for a while when you don't need a full battery is the main thing you can do."));
         if (today.Score >= 60)
             tips.Add(new Tip(TipLevel.Warn, $"High battery stress today ({today.Score}/100)",
                 $"{today.HoursAtFull:0.#} h at full on the charger" +

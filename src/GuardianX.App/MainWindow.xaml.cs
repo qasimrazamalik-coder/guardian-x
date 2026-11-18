@@ -75,7 +75,8 @@ public partial class MainWindow : Window
     {
         var store = _monitor.Store;
         var now = DateTimeOffset.Now;
-        DeviceText.Text = $"{Clean(s.DeviceName)} · {Clean(s.Manufacturer)} · {s.Chemistry} · {s.DesignMWh / 1000.0:0.0} Wh when new".Replace(" ·  · ", " · ");
+        DeviceText.Text = string.Join(" · ", new[] { Model, $"{Clean(s.Manufacturer)} {s.Chemistry} battery".Trim(), $"{s.DesignMWh / 1000.0:0.0} Wh when new" }
+            .Where(x => !string.IsNullOrWhiteSpace(x)));
 
         // Header chip
         StateText.Text = s.OnAc ? (s.Charging ? "CHARGING" : "ON CHARGER") : "ON BATTERY";
@@ -92,11 +93,11 @@ public partial class MainWindow : Window
         {
             WearSpeedText.Text = $"{w:0.0}% per 100 cycles";
             double scale = Math.Max(w, BatteryInsights.TypicalWearPer100Cycles) * 1.15;
-            double barWidth = 300;
-            WearTypicalBar.Width = barWidth * BatteryInsights.TypicalWearPer100Cycles / scale;
+            double barWidth = WearTrack.ActualWidth > 0 ? WearTrack.ActualWidth : 300;
+            WearTypicalMark.Margin = new Thickness(barWidth * BatteryInsights.TypicalWearPer100Cycles / scale - 1.5, 0, 0, 0);
             WearYoursBar.Width = barWidth * w / scale;
             WearYoursBar.Background = w > BatteryInsights.TypicalWearPer100Cycles * 2 ? BadBrush : w > BatteryInsights.TypicalWearPer100Cycles ? WarnBrush : GoodBrush;
-            WearCompareText.Text = $"Typical is about {BatteryInsights.TypicalWearPer100Cycles:0}% (grey bar). " +
+            WearCompareText.Text = $"The white mark is typical, about {BatteryInsights.TypicalWearPer100Cycles:0}%. " +
                 (w > BatteryInsights.TypicalWearPer100Cycles * 2 ? "Yours is ageing faster than its use explains." : "You're in a healthy range.") +
                 (wear.WearPerMonth is double m ? $" Measured trend: {m:0.0}% a month." : "");
         }
@@ -262,20 +263,19 @@ public partial class MainWindow : Window
         OptSleep.IsChecked = st.NotifySleepDrain;
         OptGpu.IsChecked = st.NotifyGpu;
         OptStartup.IsChecked = st.StartWithWindows;
-        OptFullMinutes.SelectedIndex = st.FullHoldMinutes switch { <= 60 => 0, <= 120 => 1, _ => 2 };
+        (st.FullHoldMinutes switch { <= 60 => Hold60, <= 120 => Hold120, _ => Hold240 }).IsChecked = true;
         _loadingSettings = false;
     }
 
     private void OnSettingChanged(object sender, RoutedEventArgs e)
     {
-        if (_loadingSettings || OptFullMinutes is null) return;
+        if (_loadingSettings || Hold240 is null || OptGpu is null) return;
         var st = _monitor.Settings;
         st.NotifyFullHold = OptFull.IsChecked == true;
         st.NotifyLow = OptLow.IsChecked == true;
         st.NotifySleepDrain = OptSleep.IsChecked == true;
         st.NotifyGpu = OptGpu.IsChecked == true;
-        if (OptFullMinutes.SelectedItem is ComboBoxItem item && int.TryParse(item.Tag?.ToString(), out var minutes))
-            st.FullHoldMinutes = minutes;
+        st.FullHoldMinutes = Hold60.IsChecked == true ? 60 : Hold240.IsChecked == true ? 240 : 120;
         if (st.StartWithWindows != (OptStartup.IsChecked == true))
         {
             st.StartWithWindows = OptStartup.IsChecked == true;
@@ -377,6 +377,18 @@ public partial class MainWindow : Window
     }
 
     private static string Clean(string s) => string.IsNullOrWhiteSpace(s) ? "" : s.Trim();
+
+    private static readonly string Model = ReadModel();
+
+    private static string ReadModel()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
+            return (key?.GetValue("SystemProductName") as string)?.Trim() ?? "";
+        }
+        catch { return ""; }
+    }
 
     private void UseDarkTitleBar()
     {

@@ -6,7 +6,8 @@
         Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/guardian.ico"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
-  <Grid Margin="18,14,18,12">
+  <Border Padding="18,14,18,12" Background="{StaticResource Bg}">
+  <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
@@ -54,10 +55,10 @@
                 <StackPanel>
                   <TextBlock Text="WEAR SPEED" Style="{StaticResource Eyebrow}" Margin="0,0,0,6"/>
                   <TextBlock x:Name="WearSpeedText" FontFamily="{StaticResource Display}" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
-                  <Grid Margin="0,10,0,4" Height="8">
-                    <Border Background="#1F2630" CornerRadius="4"/>
-                    <Border x:Name="WearTypicalBar" Background="#3A4A5C" CornerRadius="4" HorizontalAlignment="Left"/>
-                    <Border x:Name="WearYoursBar" CornerRadius="4" HorizontalAlignment="Left" Height="4" Background="{StaticResource Bad}"/>
+                  <Grid x:Name="WearTrack" Margin="0,12,0,6" Height="16">
+                    <Border Background="#1F2630" CornerRadius="4" Height="8"/>
+                    <Border x:Name="WearYoursBar" CornerRadius="4" HorizontalAlignment="Left" Height="8" Background="{StaticResource Bad}"/>
+                    <Border x:Name="WearTypicalMark" Width="3" Height="16" CornerRadius="1.5" Background="{StaticResource Ink}" HorizontalAlignment="Left"/>
                   </Grid>
                   <TextBlock x:Name="WearCompareText" Style="{StaticResource Body}" FontSize="12"/>
                 </StackPanel>
@@ -245,13 +246,15 @@
             <StackPanel>
               <TextBlock Text="ALERTS" Style="{StaticResource Eyebrow}"/>
               <CheckBox x:Name="OptFull" Style="{StaticResource Toggle}" Content="Tell me when it sits at 100% on the charger" Click="OnSettingChanged"/>
-              <StackPanel Orientation="Horizontal" Margin="0,2,0,8">
-                <TextBlock Text="after" Style="{StaticResource Body}" VerticalAlignment="Center"/>
-                <ComboBox x:Name="OptFullMinutes" Width="110" Margin="8,0" SelectionChanged="OnSettingChanged">
-                  <ComboBoxItem Content="1 hour" Tag="60"/>
-                  <ComboBoxItem Content="2 hours" Tag="120"/>
-                  <ComboBoxItem Content="4 hours" Tag="240"/>
-                </ComboBox>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBlock Text="after" Style="{StaticResource Body}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <Border Background="#0F1318" CornerRadius="10" Padding="3">
+                  <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="Hold60" GroupName="hold" Content="1 hour" Style="{StaticResource TabButton}" Tag="60" Checked="OnSettingChanged"/>
+                    <RadioButton x:Name="Hold120" GroupName="hold" Content="2 hours" Style="{StaticResource TabButton}" Tag="120" Checked="OnSettingChanged"/>
+                    <RadioButton x:Name="Hold240" GroupName="hold" Content="4 hours" Style="{StaticResource TabButton}" Tag="240" Checked="OnSettingChanged"/>
+                  </StackPanel>
+                </Border>
               </StackPanel>
               <CheckBox x:Name="OptLow" Style="{StaticResource Toggle}" Content="Warn me at 15% on battery" Click="OnSettingChanged"/>
               <CheckBox x:Name="OptSleep" Style="{StaticResource Toggle}" Content="Tell me when it drains unusually in sleep" Click="OnSettingChanged"/>
@@ -268,10 +271,17 @@
           </Border>
           <Border Style="{StaticResource CardBorder}">
             <StackPanel>
-              <TextBlock Text="CAP THE CHARGE AT 80%" Style="{StaticResource Eyebrow}"/>
+              <TextBlock Text="LESS TIME AT 100%" Style="{StaticResource Eyebrow}"/>
               <TextBlock Style="{StaticResource Body}">
-                On your OMEN the charge limit lives in the BIOS, so no Windows app can switch it on for you. Restart, press F10 to open BIOS Setup,
-                go to Advanced (or Configuration) and turn on Adaptive Battery Optimizer, then save with F10. Guardian X will show the effect as fewer hours at 100%.
+                HP only offers a fixed 80% charge limit on its business laptops, not on OMEN. Your OMEN has Adaptive Battery Optimizer instead:
+                it watches battery temperature, charge and how you use it, and steps in by itself when it sees harm.
+              </TextBlock>
+              <TextBlock Style="{StaticResource Body}" Margin="0,8,0,0">
+                Make sure it's on: restart, press F10, open Configuration, set Adaptive Battery Optimizer to Enabled, save with F10.
+                To see whether it has stepped in: restart, press F2, then Power &gt; Battery &gt; Run Once &gt; Battery Details.
+              </TextBlock>
+              <TextBlock Style="{StaticResource Body}" Margin="0,8,0,0" Foreground="{StaticResource Ink}">
+                Because there's no hard cap, unplugging when you're not gaming is the biggest win. Guardian X tells you when it has sat full too long.
               </TextBlock>
             </StackPanel>
           </Border>
@@ -306,4 +316,5 @@
       </Grid>
     </ScrollViewer>
   </Grid>
+  </Border>
 </Window>
