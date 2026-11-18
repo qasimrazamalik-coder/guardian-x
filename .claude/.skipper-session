@@ -1,0 +1,9 @@
+1795027157|src/GuardianX.Core/Battery/BatteryReader.cs
+1795027186|src/GuardianX.Core/Gpu/DgpuWatcher.cs
+1795027218|src/GuardianX.Core/Data/Store.cs
+1795027261|src/GuardianX.Core/Insights/Insights.cs
+1795027282|src/GuardianX.Core/Monitor.cs
+1795027311|tests/GuardianX.Tests/InsightsTests.cs
+1795027443|src/GuardianX.App/Views/Charts.cs
+1795027504|src/GuardianX.App/MainWindow.xaml
+1795027567|src/GuardianX.App/MainWindow.xaml.cs

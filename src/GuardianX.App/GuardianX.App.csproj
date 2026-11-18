@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>GuardianX</AssemblyName>
+    <RootNamespace>GuardianX.App</RootNamespace>
+    <ApplicationIcon>Assets\guardian.ico</ApplicationIcon>
+    <StartupObject>GuardianX.App.Program</StartupObject>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="0.0.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GuardianX.Core\GuardianX.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\guardian.ico" />
+    <None Remove="Assets\guardian.ico" />
+  </ItemGroup>
+</Project>
