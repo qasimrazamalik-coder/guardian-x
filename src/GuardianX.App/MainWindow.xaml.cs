@@ -191,7 +191,8 @@ public partial class MainWindow : Window
 
         // Coach
         var gpuWeek = store.GpuHolders(now.AddDays(-7));
-        TipsList.ItemsSource = BatteryInsights.Coach(wear, stress, hold, lastSleep, gpuWeek)
+        var chargerHours = BatteryInsights.ChargerHoursPerDay(store.ReportPeriods());
+        TipsList.ItemsSource = BatteryInsights.Coach(wear, stress, hold, lastSleep, gpuWeek, chargerHours)
             .Select(t => new
             {
                 t.Title,
@@ -206,9 +207,14 @@ public partial class MainWindow : Window
         var now = DateTimeOffset.Now;
         var daily = store.DailyCapacity(400);
         var wear = BatteryInsights.Wear(s.FullMWh, s.DesignMWh, s.Cycles, daily);
-        TrendText.Text = wear.WearPerMonth is double m
-            ? $"Losing about {m:0.0}% of capacity a month over the last {wear.TrendDays} days."
-            : $"The trend needs two weeks of history ({Math.Max(0, 14 - wear.TrendDays)} more days). Today: {wear.HealthPercent:0.0}% health.";
+        var report = store.ReportPeriods();
+        var since = daily.Count > 0 ? daily[0].Day.ToString("d MMM yyyy") : "";
+        var chargerHours = BatteryInsights.ChargerHoursPerDay(report);
+        TrendText.Text = (wear.WearPerMonth is double m
+            ? $"Losing about {m:0.0}% of capacity a month, measured since {since}."
+            : $"The trend needs two weeks of history ({Math.Max(0, 14 - wear.TrendDays)} more days). Today: {wear.HealthPercent:0.0}% health.") +
+            (chargerHours is double ch ? $" On the charger about {ch:0.#} h a day over the last two weeks." : "") +
+            (report.Count > 0 ? " Older points come from Windows' own battery records." : "");
 
         var pts = daily.Select(d => new LineChart.Point2(
             new DateTimeOffset(d.Day.ToDateTime(new TimeOnly(12, 0))), d.DesignMWh > 0 ? d.FullMWh * 100.0 / d.DesignMWh : 0, false)).ToList();

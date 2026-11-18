@@ -125,8 +125,19 @@ public static class BatteryInsights
     }
 
     /// <summary>Plain advice built from the user's own numbers, most important first.</summary>
+    /// <summary>Average hours a day on the charger over the last <paramref name="days"/> days of Windows' history.</summary>
+    public static double? ChargerHoursPerDay(IReadOnlyList<GuardianX.Core.Battery.ReportPeriod> periods, int days = 14)
+    {
+        var from = DateTime.Now.AddDays(-days);
+        var recent = periods.Where(p => p.End >= from).ToList();
+        if (recent.Count == 0) return null;
+        double totalDays = recent.Sum(p => p.Days);
+        double hours = recent.Sum(p => (p.ActiveOnCharger + p.StandbyOnCharger).TotalHours);
+        return totalDays >= 3 ? Math.Round(hours / totalDays, 1) : null;
+    }
+
     public static List<Tip> Coach(WearReport wear, StressReport today, int fullHoldMinutes,
-        SleepReport? lastSleep, IReadOnlyList<(string App, int Times)> gpuWeek)
+        SleepReport? lastSleep, IReadOnlyList<(string App, int Times)> gpuWeek, double? chargerHoursPerDay = null)
     {
         var tips = new List<Tip>();
         if (wear.WearPer100Cycles is double w && w > TypicalWearPer100Cycles * 2)
@@ -134,6 +145,11 @@ public static class BatteryInsights
                 $"It has lost {wear.WearPercent:0.#}% in {wear.Cycles} cycles, about {w:0.#}% per 100 cycles. " +
                 $"A typical battery loses about {TypicalWearPer100Cycles:0}% per 100 cycles. That pattern usually means hours " +
                 "spent at 100% on the charger and heat from gaming. Unplugging when you don't need a full battery is the biggest fix."));
+        if (chargerHoursPerDay is double ch && ch >= 16)
+            tips.Add(new Tip(TipLevel.Warn, $"Plugged in about {ch:0} hours a day",
+                $"Windows' own battery records show your laptop on the charger for {ch:0.#} hours a day over the last two weeks. " +
+                "Mostly it sits full, which is the main reason a gaming laptop battery wears early. " +
+                "Unplug and use it down to about 40% a few times a week, then plug back in."));
         if (fullHoldMinutes >= 60)
             tips.Add(new Tip(TipLevel.Warn, $"At 100% on the charger for {FormatMinutes(fullHoldMinutes)}",
                 "Sitting full and warm is what ages a lithium battery fastest. Your OMEN has no fixed 80% limit, so " +

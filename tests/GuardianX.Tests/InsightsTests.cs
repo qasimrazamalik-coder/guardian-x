@@ -129,6 +129,51 @@ public class InsightsTests
         Assert.Equal(TipLevel.Good, tips[0].Level);
     }
 
+    private const string ReportXml = """
+        <BatteryReport xmlns="http://schemas.microsoft.com/battery/2012">
+          <History>
+            <HistoryEntry LocalStartDate="2026-07-13T07:04:52" LocalEndDate="2026-07-21T04:34:21" DesignCapacity="70070" FullChargeCapacity="68229" CycleCount="1" ActiveAcTime="PT1H18M32S" ActiveDcTime="PT3H38M0S" CsAcTime="PT43M34S" CsDcTime="PT13M20S" BatteryChanged="0" />
+            <HistoryEntry LocalStartDate="2026-11-16T00:00:00" LocalEndDate="2026-11-16T23:59:59" DesignCapacity="70070" FullChargeCapacity="61890" CycleCount="54" ActiveAcTime="PT23H3M25S" ActiveDcTime="PT56M5S" CsAcTime="PT0S" CsDcTime="PT0S" BatteryChanged="0" />
+            <HistoryEntry LocalStartDate="2026-11-17T00:00:00" LocalEndDate="2026-11-17T23:59:59" DesignCapacity="70070" FullChargeCapacity="0" CycleCount="54" ActiveAcTime="PT0S" ActiveDcTime="PT0S" CsAcTime="PT0S" CsDcTime="PT0S" BatteryChanged="0" />
+          </History>
+        </BatteryReport>
+        """;
+
+    [Fact]
+    public void ParsesWindowsBatteryHistory()
+    {
+        var periods = GuardianX.Core.Battery.BatteryReport.Parse(ReportXml);
+        Assert.Equal(2, periods.Count); // the empty reading is skipped
+        Assert.Equal(68229, periods[0].FullMWh);
+        Assert.Equal(54, periods[1].Cycles);
+        Assert.Equal(new TimeSpan(23, 3, 25), periods[1].ActiveOnCharger);
+        Assert.InRange(periods[1].ChargerHoursPerDay, 23.0, 23.1);
+    }
+
+    [Fact]
+    public void BatteryChangeResetsHistory()
+    {
+        var xml = ReportXml.Replace("CycleCount=\"54\" ActiveAcTime=\"PT23H3M25S\" ActiveDcTime=\"PT56M5S\" CsAcTime=\"PT0S\" CsDcTime=\"PT0S\" BatteryChanged=\"0\"",
+                                    "CycleCount=\"54\" ActiveAcTime=\"PT23H3M25S\" ActiveDcTime=\"PT56M5S\" CsAcTime=\"PT0S\" CsDcTime=\"PT0S\" BatteryChanged=\"1\"");
+        var periods = GuardianX.Core.Battery.BatteryReport.Parse(xml);
+        Assert.Single(periods);
+        Assert.Equal(61890, periods[0].FullMWh);
+    }
+
+    [Fact]
+    public void ChargerTipUsesWindowsRecords()
+    {
+        var end = DateTime.Now.Date;
+        var periods = Enumerable.Range(0, 14).Select(i => new GuardianX.Core.Battery.ReportPeriod(
+            end.AddDays(-i - 1), end.AddDays(-i), 62000, 70070, 54,
+            TimeSpan.FromHours(22), TimeSpan.FromHours(1), TimeSpan.FromHours(1), TimeSpan.Zero)).ToList();
+        var hours = BatteryInsights.ChargerHoursPerDay(periods);
+        Assert.Equal(23, hours);
+        var tips = BatteryInsights.Coach(BatteryInsights.Wear(69000, 70070, 100, []),
+            new StressReport(0, "Low", 0, 0, 0, false), 0, null, [], hours);
+        Assert.Contains(tips, t => t.Title == "Plugged in about 23 hours a day");
+    }
+
     [Theory]
     [InlineData("pid_1234_luid_0x00000000_0x0001802E_phys_0", 1234)]
     [InlineData("luid_0x00000000_0x0001802E_phys_0", -1)]

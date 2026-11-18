@@ -35,6 +35,9 @@ public sealed class Store : IDisposable
             CREATE TABLE IF NOT EXISTS events(ts INTEGER, kind TEXT, pct REAL);
             CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
             CREATE TABLE IF NOT EXISTS gpu(ts INTEGER, app TEXT, bytes INTEGER);
+            CREATE TABLE IF NOT EXISTS report(
+              start TEXT, end TEXT PRIMARY KEY, full INTEGER, design INTEGER, cycles INTEGER,
+              ac_active INTEGER, dc_active INTEGER, ac_standby INTEGER, dc_standby INTEGER);
             CREATE INDEX IF NOT EXISTS gpu_ts ON gpu(ts);
             """);
     }
@@ -123,9 +126,19 @@ public sealed class Store : IDisposable
         }
     }
 
-    /// <summary>Last sample of each day: the full charge capacity and cycle count that day.</summary>
+    /// <summary>
+    /// Capacity per day: Guardian X's own readings where it has them, and Windows' battery history
+    /// (weekly, then daily) for everything before that.
+    /// </summary>
     public List<(DateOnly Day, int FullMWh, int DesignMWh, int Cycles)> DailyCapacity(int days)
     {
+        var from = DateOnly.FromDateTime(DateTime.Now.AddDays(-days));
+        var map = new SortedDictionary<DateOnly, (int, int, int)>();
+        foreach (var p in ReportPeriods())
+        {
+            var day = DateOnly.FromDateTime(p.End);
+            if (day >= from) map[day] = (p.FullMWh, p.DesignMWh, p.Cycles);
+        }
         lock (_lock)
         {
             using var cmd = _db.CreateCommand();
@@ -135,9 +148,53 @@ public sealed class Store : IDisposable
                 """;
             cmd.Parameters.AddWithValue("$a", DateTimeOffset.Now.AddDays(-days).ToUnixTimeSeconds());
             using var r = cmd.ExecuteReader();
-            var list = new List<(DateOnly, int, int, int)>();
             while (r.Read())
-                list.Add((DateOnly.Parse(r.GetString(0)), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3)));
+                map[DateOnly.Parse(r.GetString(0))] = (r.GetInt32(1), r.GetInt32(2), r.GetInt32(3));
+        }
+        return map.Select(kv => (kv.Key, kv.Value.Item1, kv.Value.Item2, kv.Value.Item3)).ToList();
+    }
+
+    /// <summary>Replaces the stored copy of Windows' battery history.</summary>
+    public void SaveReport(IReadOnlyList<GuardianX.Core.Battery.ReportPeriod> periods)
+    {
+        if (periods.Count == 0) return;
+        lock (_lock)
+        {
+            using var tx = _db.BeginTransaction();
+            using (var del = _db.CreateCommand()) { del.Transaction = tx; del.CommandText = "DELETE FROM report"; del.ExecuteNonQuery(); }
+            foreach (var p in periods)
+            {
+                using var cmd = _db.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = "INSERT OR REPLACE INTO report VALUES($s,$e,$f,$d,$c,$aa,$da,$as,$ds)";
+                cmd.Parameters.AddWithValue("$s", p.Start.ToString("s"));
+                cmd.Parameters.AddWithValue("$e", p.End.ToString("s"));
+                cmd.Parameters.AddWithValue("$f", p.FullMWh);
+                cmd.Parameters.AddWithValue("$d", p.DesignMWh);
+                cmd.Parameters.AddWithValue("$c", p.Cycles);
+                cmd.Parameters.AddWithValue("$aa", (long)p.ActiveOnCharger.TotalSeconds);
+                cmd.Parameters.AddWithValue("$da", (long)p.ActiveOnBattery.TotalSeconds);
+                cmd.Parameters.AddWithValue("$as", (long)p.StandbyOnCharger.TotalSeconds);
+                cmd.Parameters.AddWithValue("$ds", (long)p.StandbyOnBattery.TotalSeconds);
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public List<GuardianX.Core.Battery.ReportPeriod> ReportPeriods()
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "SELECT * FROM report ORDER BY end";
+            using var r = cmd.ExecuteReader();
+            var list = new List<GuardianX.Core.Battery.ReportPeriod>();
+            while (r.Read())
+                list.Add(new GuardianX.Core.Battery.ReportPeriod(
+                    DateTime.Parse(r.GetString(0)), DateTime.Parse(r.GetString(1)), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4),
+                    TimeSpan.FromSeconds(r.GetInt64(5)), TimeSpan.FromSeconds(r.GetInt64(6)),
+                    TimeSpan.FromSeconds(r.GetInt64(7)), TimeSpan.FromSeconds(r.GetInt64(8))));
             return list;
         }
     }
@@ -189,7 +246,7 @@ public sealed class Store : IDisposable
 
     public void DeleteAll()
     {
-        lock (_lock) Exec("DELETE FROM samples; DELETE FROM events; DELETE FROM gpu; VACUUM;");
+        lock (_lock) Exec("DELETE FROM samples; DELETE FROM events; DELETE FROM gpu; DELETE FROM report; VACUUM;");
     }
 
     /// <summary>Drops samples older than two years so the file stays small.</summary>

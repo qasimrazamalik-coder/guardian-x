@@ -66,10 +66,24 @@ public sealed class GuardianMonitor : IDisposable
         _timer = new Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
+    public event Action? ReportImported;
+    private DateTime _lastReport = DateTime.MinValue;
+
     public void Start()
     {
         Store.Prune();
         _timer.Change(TimeSpan.Zero, TimeSpan.FromMinutes(1));
+    }
+
+    /// <summary>Copies Windows' battery history into the store, at most once a day. Takes a few seconds.</summary>
+    public void ImportReportIfDue()
+    {
+        if (DateTime.Now - _lastReport < TimeSpan.FromHours(24)) return;
+        _lastReport = DateTime.Now;
+        var periods = BatteryReport.Load();
+        if (periods.Count == 0) return;
+        Store.SaveReport(periods);
+        ReportImported?.Invoke();
     }
 
     public void Tick()
@@ -89,6 +103,7 @@ public sealed class GuardianMonitor : IDisposable
             }
             _lastOnAc = s.OnAc;
 
+            ImportReportIfDue();
             CheckFullHold(s);
             CheckLow(s);
             CheckGpu(s);
