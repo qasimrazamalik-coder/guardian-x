@@ -38,6 +38,8 @@ public sealed class Store : IDisposable
             CREATE TABLE IF NOT EXISTS report(
               start TEXT, end TEXT PRIMARY KEY, full INTEGER, design INTEGER, cycles INTEGER,
               ac_active INTEGER, dc_active INTEGER, ac_standby INTEGER, dc_standby INTEGER);
+            CREATE TABLE IF NOT EXISTS app_energy(day TEXT, app TEXT, name TEXT, mwh REAL, cpu REAL, PRIMARY KEY(day, app));
+            CREATE TABLE IF NOT EXISTS kb(id TEXT PRIMARY KEY, source TEXT, text TEXT, hash TEXT, vec BLOB);
             CREATE INDEX IF NOT EXISTS gpu_ts ON gpu(ts);
             """);
     }
@@ -213,6 +215,103 @@ public sealed class Store : IDisposable
         }
     }
 
+    /// <summary>Adds an app's estimated battery use for today.</summary>
+    public void AddAppEnergy(string app, string name, double mwh, double cpuSeconds)
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO app_energy VALUES($d,$a,$n,$m,$c)
+                ON CONFLICT(day, app) DO UPDATE SET mwh = mwh + $m, cpu = cpu + $c, name = $n
+                """;
+            cmd.Parameters.AddWithValue("$d", DateTime.Now.ToString("yyyy-MM-dd"));
+            cmd.Parameters.AddWithValue("$a", app);
+            cmd.Parameters.AddWithValue("$n", name);
+            cmd.Parameters.AddWithValue("$m", mwh);
+            cmd.Parameters.AddWithValue("$c", cpuSeconds);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public List<(string App, string Name, double MWh)> AppEnergy(int days)
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "SELECT app, MAX(name), SUM(mwh) s FROM app_energy WHERE day >= $d GROUP BY app ORDER BY s DESC LIMIT 12";
+            cmd.Parameters.AddWithValue("$d", DateTime.Now.AddDays(-days + 1).ToString("yyyy-MM-dd"));
+            using var r = cmd.ExecuteReader();
+            var list = new List<(string, string, double)>();
+            while (r.Read()) list.Add((r.GetString(0), r.GetString(1), r.GetDouble(2)));
+            return list;
+        }
+    }
+
+    /// <summary>Minutes spent in each 10% charge band (0-9, 10-19 ... 90-100) over the last days.</summary>
+    public double[] ChargeHistogram(int days)
+    {
+        var bands = new double[10];
+        var s = Samples(DateTimeOffset.Now.AddDays(-days), DateTimeOffset.Now.AddMinutes(1));
+        for (int i = 1; i < s.Count; i++)
+        {
+            double m = (s[i].Time - s[i - 1].Time).TotalMinutes;
+            if (m <= 0 || m > 5) continue;
+            bands[Math.Min(9, (int)(s[i - 1].Percent / 10))] += m;
+        }
+        return bands;
+    }
+
+    /// <summary>Minutes awake per weekday (0 = Monday) and hour, split into on charger / on battery.</summary>
+    public (double[,] Charger, double[,] Battery) UsageGrid(int days)
+    {
+        var ac = new double[7, 24];
+        var dc = new double[7, 24];
+        var s = Samples(DateTimeOffset.Now.AddDays(-days), DateTimeOffset.Now.AddMinutes(1));
+        for (int i = 1; i < s.Count; i++)
+        {
+            double m = (s[i].Time - s[i - 1].Time).TotalMinutes;
+            if (m <= 0 || m > 5) continue;
+            var t = s[i - 1].Time;
+            int wd = ((int)t.DayOfWeek + 6) % 7;
+            if (s[i - 1].OnAc) ac[wd, t.Hour] += m; else dc[wd, t.Hour] += m;
+        }
+        return (ac, dc);
+    }
+
+    public void SaveChunk(string id, string source, string text, string hash, float[]? vec)
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "INSERT OR REPLACE INTO kb VALUES($i,$s,$t,$h,$v)";
+            cmd.Parameters.AddWithValue("$i", id);
+            cmd.Parameters.AddWithValue("$s", source);
+            cmd.Parameters.AddWithValue("$t", text);
+            cmd.Parameters.AddWithValue("$h", hash);
+            cmd.Parameters.AddWithValue("$v", vec is null ? DBNull.Value : System.Runtime.InteropServices.MemoryMarshal.AsBytes(vec.AsSpan()).ToArray());
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public List<(string Id, string Source, string Text, string Hash, float[]? Vec)> Chunks()
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "SELECT id, source, text, hash, vec FROM kb";
+            using var r = cmd.ExecuteReader();
+            var list = new List<(string, string, string, string, float[]?)>();
+            while (r.Read())
+            {
+                float[]? v = null;
+                if (!r.IsDBNull(4)) v = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(((byte[])r.GetValue(4)).AsSpan()).ToArray();
+                list.Add((r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), v));
+            }
+            return list;
+        }
+    }
+
     public int SampleCount()
     {
         lock (_lock)
@@ -246,7 +345,7 @@ public sealed class Store : IDisposable
 
     public void DeleteAll()
     {
-        lock (_lock) Exec("DELETE FROM samples; DELETE FROM events; DELETE FROM gpu; DELETE FROM report; VACUUM;");
+        lock (_lock) Exec("DELETE FROM samples; DELETE FROM events; DELETE FROM gpu; DELETE FROM report; DELETE FROM app_energy; VACUUM;");
     }
 
     /// <summary>Drops samples older than two years so the file stays small.</summary>

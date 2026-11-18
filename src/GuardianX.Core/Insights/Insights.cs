@@ -92,8 +92,9 @@ public static class BatteryInsights
     }
 
     /// <summary>Battery lost during each sleep, and whether it was unusual compared with earlier sleeps.</summary>
-    public static List<SleepReport> Sleeps(IReadOnlyList<PowerEvent> events)
+    public static List<SleepReport> Sleeps(IReadOnlyList<PowerEvent> allEvents)
     {
+        var events = allEvents.Where(e => e.Kind is "suspend" or "resume").ToList();
         var raw = new List<(DateTimeOffset s, DateTimeOffset e, double lost, double perHour)>();
         for (int i = 0; i < events.Count - 1; i++)
         {
