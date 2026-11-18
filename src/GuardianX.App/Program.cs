@@ -16,6 +16,15 @@ public static class Program
             .OnBeforeUninstallFastCallback(_ => UninstallHooks.BeforeUninstall())
             .Run();
 
+        if (args.Length >= 2 && args[0] == "--selftest") { DevTools.SelfTest(args[1]); return; }
+        if (args.Length >= 2 && args[0] == "--snapshot")
+        {
+            var snapApp = new App { StartHidden = true, SnapshotPath = args[1], SnapshotTab = args.Length > 2 ? args[2] : "overview" };
+            snapApp.InitializeComponent();
+            snapApp.Run();
+            return;
+        }
+
         using var mutex = new Mutex(true, "GuardianX.Single.7c3e", out bool first);
         if (!first)
         {

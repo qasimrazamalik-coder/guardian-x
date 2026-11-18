@@ -10,6 +10,8 @@ namespace GuardianX.App;
 public partial class App : Application
 {
     public bool StartHidden { get; init; }
+    public string? SnapshotPath { get; init; }
+    public string SnapshotTab { get; init; } = "overview";
     public GuardianMonitor Monitor { get; private set; } = null!;
     private Forms.NotifyIcon _tray = null!;
     private MainWindow? _window;
@@ -24,6 +26,12 @@ public partial class App : Application
             Log("Unhandled: " + ex.Exception);
             ex.Handled = true;
         };
+
+        if (SnapshotPath is not null)
+        {
+            DevTools.Snapshot(this, SnapshotPath, SnapshotTab);
+            return;
+        }
 
         var settings = Settings.Load();
         Monitor = new GuardianMonitor(new Store(), settings, new DgpuWatcher());
