@@ -164,7 +164,7 @@ public class InsightsTests
     public void ChargerTipUsesWindowsRecords()
     {
         var end = DateTime.Now.Date;
-        var periods = Enumerable.Range(0, 14).Select(i => new GuardianX.Core.Battery.ReportPeriod(
+        var periods = Enumerable.Range(0, 7).Select(i => new GuardianX.Core.Battery.ReportPeriod(
             end.AddDays(-i - 1), end.AddDays(-i), 62000, 70070, 54,
             TimeSpan.FromHours(22), TimeSpan.FromHours(1), TimeSpan.FromHours(1), TimeSpan.Zero)).ToList();
         var hours = BatteryInsights.ChargerHoursPerDay(periods);
@@ -172,6 +172,37 @@ public class InsightsTests
         var tips = BatteryInsights.Coach(BatteryInsights.Wear(69000, 70070, 100, []),
             new StressReport(0, "Low", 0, 0, 0, false), 0, null, [], hours);
         Assert.Contains(tips, t => t.Title == "Plugged in about 23 hours a day");
+    }
+
+    [Fact]
+    public void OldWeeklySummariesDontDiluteThisWeek()
+    {
+        var today = DateTime.Now.Date;
+        var periods = new List<GuardianX.Core.Battery.ReportPeriod>
+        {
+            new(today.AddDays(-14), today.AddDays(-7), 62000, 70070, 49, TimeSpan.FromHours(10), TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero),
+        };
+        for (int i = 7; i >= 1; i--)
+            periods.Add(new(today.AddDays(-i), today.AddDays(-i + 1), 62000, 70070, 54, TimeSpan.FromHours(20), TimeSpan.Zero, TimeSpan.FromHours(2), TimeSpan.Zero));
+        Assert.Equal(22.0, BatteryInsights.ChargerHoursPerDay(periods)!.Value);
+    }
+
+    [Fact]
+    public void FindsTheBiggestDrop()
+    {
+        // From the user's Windows records: 68,377 on 5 Oct, 65,731 on 12 Oct, 63,198 on 19 Oct.
+        var daily = new List<(DateOnly, int, int, int)>
+        {
+            (new DateOnly(2026, 9, 28), 68109, 70070, 18),
+            (new DateOnly(2026, 10, 5), 68377, 70070, 23),
+            (new DateOnly(2026, 10, 12), 65731, 70070, 30),
+            (new DateOnly(2026, 10, 19), 63198, 70070, 36),
+            (new DateOnly(2026, 10, 26), 63082, 70070, 42),
+        };
+        var drop = BatteryInsights.BiggestDrop(daily)!.Value;
+        Assert.Equal(new DateOnly(2026, 10, 5), drop.From);
+        Assert.Equal(new DateOnly(2026, 10, 19), drop.To);
+        Assert.Equal(7.4, drop.Lost);
     }
 
     [Theory]

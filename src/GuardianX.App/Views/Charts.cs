@@ -79,6 +79,7 @@ public sealed class LineChart : FrameworkElement
     public string Unit { get; set; } = "%";
     public TimeSpan MaxGap { get; set; } = TimeSpan.FromMinutes(6);
     public bool DailyTicks { get; set; }
+    public bool ShowDots { get; set; }
     public Color LineColor { get; set; } = Color.FromRgb(0x6C, 0xB6, 0xFF);
     public Color HighlightColor { get; set; } = Color.FromRgb(0xFF, 0xB5, 0x47);
     public string EmptyText { get; set; } = "Collecting data. The first readings appear within a minute.";
@@ -142,6 +143,9 @@ public sealed class LineChart : FrameworkElement
             if (b.Time - a.Time > MaxGap) continue;
             dc.DrawLine(a.Highlight ? hi : normal, new Point(X(a.Time), Y(a.Value)), new Point(X(b.Time), Y(b.Value)));
         }
+        if (ShowDots)
+            foreach (var p in Points)
+                dc.DrawEllipse(HealthRing.Frozen(LineColor), null, new Point(X(p.Time), Y(p.Value)), 2.5, 2.5);
         var last = Points[^1];
         dc.DrawEllipse(HealthRing.Frozen(last.Highlight ? HighlightColor : LineColor), null, new Point(X(last.Time), Y(last.Value)), 4, 4);
     }

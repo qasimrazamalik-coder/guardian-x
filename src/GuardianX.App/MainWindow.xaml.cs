@@ -213,7 +213,9 @@ public partial class MainWindow : Window
         TrendText.Text = (wear.WearPerMonth is double m
             ? $"Losing about {m:0.0}% of capacity a month, measured since {since}."
             : $"The trend needs two weeks of history ({Math.Max(0, 14 - wear.TrendDays)} more days). Today: {wear.HealthPercent:0.0}% health.") +
-            (chargerHours is double ch ? $" On the charger about {ch:0.#} h a day over the last two weeks." : "") +
+            (BatteryInsights.BiggestDrop(daily) is { } drop
+                ? $" Biggest drop: {drop.Lost:0.0}% between {drop.From:d MMM} and {drop.To:d MMM}." : "") +
+            (chargerHours is double ch ? $" Switched on and plugged in about {ch:0.#} h a day over the last week." : "") +
             (report.Count > 0 ? " Older points come from Windows' own battery records." : "");
 
         var pts = daily.Select(d => new LineChart.Point2(
@@ -223,7 +225,8 @@ public partial class MainWindow : Window
         if (HealthChart.To - HealthChart.From < TimeSpan.FromDays(14)) HealthChart.From = HealthChart.To.AddDays(-14);
         HealthChart.Min = Math.Floor(Math.Min(80, pts.Count > 0 ? pts.Min(p => p.Value) - 2 : 80));
         HealthChart.Max = 100;
-        HealthChart.MaxGap = TimeSpan.FromDays(3);
+        HealthChart.MaxGap = TimeSpan.FromDays(16);
+        HealthChart.ShowDots = true;
         HealthChart.DailyTicks = true;
         HealthChart.LineColor = Color.FromRgb(0x3D, 0xDC, 0x97);
         HealthChart.EmptyText = "One point is added each day. Come back tomorrow to see the line start.";

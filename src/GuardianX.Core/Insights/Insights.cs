@@ -125,15 +125,33 @@ public static class BatteryInsights
     }
 
     /// <summary>Plain advice built from the user's own numbers, most important first.</summary>
-    /// <summary>Average hours a day on the charger over the last <paramref name="days"/> days of Windows' history.</summary>
-    public static double? ChargerHoursPerDay(IReadOnlyList<GuardianX.Core.Battery.ReportPeriod> periods, int days = 14)
+    /// <summary>
+    /// Average hours a day the laptop was switched on and plugged in, over the last <paramref name="days"/> days of
+    /// Windows' history. Only periods that fall inside the window count, so an old weekly summary can't dilute it.
+    /// </summary>
+    public static double? ChargerHoursPerDay(IReadOnlyList<GuardianX.Core.Battery.ReportPeriod> periods, int days = 7)
     {
-        var from = DateTime.Now.AddDays(-days);
-        var recent = periods.Where(p => p.End >= from).ToList();
+        var from = DateTime.Now.Date.AddDays(-days);
+        var recent = periods.Where(p => p.Start >= from.AddHours(-12)).ToList();
         if (recent.Count == 0) return null;
         double totalDays = recent.Sum(p => p.Days);
         double hours = recent.Sum(p => (p.ActiveOnCharger + p.StandbyOnCharger).TotalHours);
         return totalDays >= 3 ? Math.Round(hours / totalDays, 1) : null;
+    }
+
+    /// <summary>The 14-day stretch where the battery lost the most capacity, as % of design. Null if under 1%.</summary>
+    public static (DateOnly From, DateOnly To, double Lost)? BiggestDrop(
+        IReadOnlyList<(DateOnly Day, int FullMWh, int DesignMWh, int Cycles)> daily)
+    {
+        (DateOnly, DateOnly, double)? best = null;
+        for (int i = 0; i < daily.Count; i++)
+            for (int j = i + 1; j < daily.Count && daily[j].Day.DayNumber - daily[i].Day.DayNumber <= 14; j++)
+            {
+                if (daily[i].DesignMWh <= 0) continue;
+                double lost = (daily[i].FullMWh - daily[j].FullMWh) * 100.0 / daily[i].DesignMWh;
+                if (best is null || lost > best.Value.Item3) best = (daily[i].Day, daily[j].Day, lost);
+            }
+        return best is { } b && b.Item3 >= 1 ? (b.Item1, b.Item2, Math.Round(b.Item3, 1)) : null;
     }
 
     public static List<Tip> Coach(WearReport wear, StressReport today, int fullHoldMinutes,
@@ -147,7 +165,7 @@ public static class BatteryInsights
                 "spent at 100% on the charger and heat from gaming. Unplugging when you don't need a full battery is the biggest fix."));
         if (chargerHoursPerDay is double ch && ch >= 16)
             tips.Add(new Tip(TipLevel.Warn, $"Plugged in about {ch:0} hours a day",
-                $"Windows' own battery records show your laptop on the charger for {ch:0.#} hours a day over the last two weeks. " +
+                $"Windows' own battery records show your laptop switched on and plugged in for {ch:0.#} hours a day over the last week. " +
                 "Mostly it sits full, which is the main reason a gaming laptop battery wears early. " +
                 "Unplug and use it down to about 40% a few times a week, then plug back in."));
         if (fullHoldMinutes >= 60)
