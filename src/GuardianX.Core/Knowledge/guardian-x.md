@@ -22,6 +22,7 @@ On battery, Guardian X lists apps that hold memory on the NVIDIA GPU, which keep
 The Apps page shows each app's RAM, CPU share and disk activity. On battery it also estimates each app's power: the measured discharge minus a base share for the screen, Wi-Fi and chipset (45%), split by each app's share of CPU time. It is an estimate, because Windows does not give apps a true per-app power meter without admin rights.
 
 ## Charge limit with a smart plug
+Supported plugs: Shelly (Gen 1 and Gen 2+, local HTTP) and TP-Link Tapo P100, P105, P110 and P115 (local KLAP protocol, using your Tapo account email and password). Set it up on the Charging page: choose the plug type, enter its IP address, and plug the laptop charger into it. A simulated plug lets you try the feature without hardware.
 When a smart plug is set up and the charge limit is on, Guardian X switches the plug off when the battery reaches the mode's limit while on the charger, and back on when it falls to the resume level on battery. If the plug is off but the laptop still charges, the charger is not on that plug and Guardian X warns once. "Charge to full now" overrides the limit until the battery is full or the laptop is unplugged. The laptop must be awake for Guardian X to switch the plug.
 
 ## Modes
