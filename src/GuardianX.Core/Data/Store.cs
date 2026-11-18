@@ -187,8 +187,9 @@ public sealed class Store : IDisposable
         SqliteConnection.ClearAllPools();
         try { Directory.Delete(work, true); } catch { }
         int samples = counts.GetValueOrDefault("samples"), periods = counts.GetValueOrDefault("report");
-        return $"The history database was damaged ({problem}). Recovered {samples} readings and {periods} Windows history periods. " +
-               $"The damaged copy is kept in {backup}.";
+        try { File.WriteAllText(Path.Combine(backup, "what-happened.txt"), $"{DateTime.Now:s} SQLite reported: {problem}\nRecovered {samples} readings and {periods} Windows history periods into a fresh database.\n"); } catch { }
+        return $"Its history file was damaged, so it rebuilt it: {samples} readings and {periods} Windows history periods recovered. " +
+               $"The damaged copy is kept in GuardianXData\\{Path.GetFileName(backup)}.";
     }
 
     /// <summary>Copies every readable row of a table, stepping past unreadable stretches by rowid.</summary>
