@@ -30,7 +30,7 @@ public sealed class MiniWidget : Window
     {
         _monitor = monitor;
         Title = "Guardian X widget";
-        Width = 236; Height = 112;
+        Width = 240; SizeToContent = SizeToContent.Height;
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
         Topmost = true; ShowInTaskbar = false; ResizeMode = ResizeMode.NoResize; ShowActivated = false;
 
@@ -78,7 +78,7 @@ public sealed class MiniWidget : Window
                      l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 60 &&
                      t >= SystemParameters.VirtualScreenTop - 20 && t < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 40;
         Left = valid ? l : area.Right - Width - 12;
-        Top = valid ? t : area.Bottom - Height - 12;
+        Top = valid ? t : area.Bottom - ActualHeight - 12;
     }
 
     private void Refresh()
@@ -88,7 +88,9 @@ public sealed class MiniWidget : Window
         _percent.Text = $"{s.Percent:0}%";
         var mode = Modes.Get(_monitor.Settings.Mode);
         string state = s.OnAc ? (s.Charging ? "Charging" : "On charger") : "On battery";
-        var hours = BatteryInsights.HoursLeft(s.RemainingMWh, s.FullMWh, s.RateMw);
+        // Same forecast as the main window: charging slows above 80%.
+        var f = BatteryInsights.Forecast(new WearReport(0, 0, s.Cycles, null, null, 0), s, 100, DateTimeOffset.Now);
+        double? hours = s.RateMw > 0 ? f.HoursToFull : f.HoursToEmpty;
         _state.Text = hours is double h && h < 48 ? $"{state} · {BatteryInsights.FormatHours(h)} {(s.RateMw > 0 ? "to full" : "left")}" : state;
         _detail.Text = $"{(s.RateMw is int r ? $"{r / 1000.0:+0.0;-0.0} W" : "— W")}  ·  {mode.Name} {mode.ResumeAt}–{mode.ChargeLimit}%";
         Brush color = !s.OnAc && s.Percent <= _monitor.Settings.LowPercent ? Red : !s.OnAc ? Amber : s.Percent >= mode.ChargeLimit ? Cyan : Mint;

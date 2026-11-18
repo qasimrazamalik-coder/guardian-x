@@ -25,9 +25,10 @@ public static class WeeklyReport
 
     public static string Build(Store store, AssistantContext c, DateTime today)
     {
-        var from = today.AddDays(-7);
+        // The last seven days including today, so a report made mid-week shows what's happened so far.
+        var from = today.AddDays(-6);
         var days = new List<(DateTime Day, StressReport Stress)>();
-        for (int i = 7; i >= 1; i--)
+        for (int i = 6; i >= 0; i--)
         {
             var d = today.AddDays(-i);
             var off = new DateTimeOffset(d, TimeZoneInfo.Local.GetUtcOffset(d));
@@ -58,7 +59,7 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,t
 @media print{body{background:#fff;color:#000}.card{background:#fff;border-color:#ccc}}
 </style></head><body><div class="wrap">
 """);
-        sb.Append($"<h1>Battery report</h1><div class=\"sub\">{from.ToString("d MMM", En)} – {today.AddDays(-1).ToString("d MMM yyyy", En)} · {E(Environment.MachineName)}</div>");
+        sb.Append($"<h1>Battery report</h1><div class=\"sub\">{from.ToString("d MMM", En)} – {today.ToString("d MMM yyyy", En)} · {E(Environment.MachineName)}</div>");
 
         var w = c.Wear;
         string Health() => w is null ? "—" : $"{w.HealthPercent:0.0}%";
@@ -74,7 +75,7 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,t
         var pts = daily.Where(d => d.Day >= DateOnly.FromDateTime(today.AddDays(-120)) && d.DesignMWh > 0).ToList();
         if (pts.Count >= 2)
         {
-            double minH = Math.Floor(pts.Min(p => p.FullMWh * 100.0 / p.DesignMWh) - 1), maxH = Math.Ceiling(pts.Max(p => p.FullMWh * 100.0 / p.DesignMWh) + 1);
+            double minH = Math.Floor(pts.Min(p => p.FullMWh * 100.0 / p.DesignMWh) - 1), maxH = Math.Min(100, Math.Ceiling(pts.Max(p => p.FullMWh * 100.0 / p.DesignMWh) + 1));
             int x0 = pts[0].Day.DayNumber, span = Math.Max(1, pts[^1].Day.DayNumber - x0);
             string P(int i) => FormattableString.Invariant($"{(pts[i].Day.DayNumber - x0) * 880.0 / span + 40:0.0},{180 - (pts[i].FullMWh * 100.0 / pts[i].DesignMWh - minH) / (maxH - minH) * 160:0.0}");
             var line = string.Join(" ", Enumerable.Range(0, pts.Count).Select(P));
@@ -89,7 +90,7 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,t
         sb.Append("<div class=\"card\"><h2>Day by day</h2><table><tr><th>Day</th><th>Stress</th><th>At 100%</th><th>Under 10%</th></tr>");
         foreach (var (d, st) in days)
             sb.Append($"<tr><td>{d.ToString("ddd d MMM", En)}</td><td class=\"{(st.Score >= 60 ? "bad" : st.Score >= 30 ? "warn" : "good")}\">{st.Score} {st.Level}</td><td>{st.HoursAtFull:0.0} h</td><td>{st.HoursLow:0.0} h</td></tr>");
-        if (days.Count == 0) sb.Append("<tr><td colspan=\"4\">No readings this week.</td></tr>");
+        if (days.Count == 0) sb.Append("<tr><td colspan=\"4\">No Guardian X readings this week yet.</td></tr>");
         sb.Append($"</table><p class=\"k\" style=\"margin-top:12px\">{cyclesThisWeek} charge cycles this week · {sleeps.Count} sleeps" +
                   (sleeps.Count > 0 ? $", average {sleeps.Average(s => s.PercentPerHour):0.0}%/h" : "") + "</p></div>");
 
