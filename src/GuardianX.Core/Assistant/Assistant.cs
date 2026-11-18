@@ -288,16 +288,18 @@ public sealed class LocalAssistant
         foreach (var t in Topics)
         {
             double score = 0;
+            var counted = new HashSet<string>(); // "app" and "apps" are one match, not two
             foreach (var trig in t.Triggers)
             {
                 if (trig.Contains(' ') || trig.Contains('%'))
-                { if (q.Contains(" " + trig + " ") || q.Contains(" " + trig)) score += 2.5; }
-                else if (stems.Contains(Knowledge.Stem(trig))) score += 1.0;
+                { if ((q.Contains(" " + trig + " ") || q.Contains(" " + trig)) && counted.Add(trig)) score += 2.5; }
+                else { var st = Knowledge.Stem(trig); if (stems.Contains(st) && counted.Add(st)) score += 1.0; }
             }
             if (score > bestScore) { bestScore = score; best = t.Id; }
         }
         // A short follow-up ("and why?", "how?") stays on the last topic.
-        if (bestScore == 0 && _lastTopic is not null && Knowledge.Words(question).Length <= 3) return _lastTopic;
+        if (bestScore == 0 && _lastTopic is not null && Knowledge.Words(question).Length <= 3 &&
+            Regex.IsMatch(q, @" (why|how|more|explain|details?|that|it|this|so|really|what about|and) ")) return _lastTopic;
         return bestScore > 0 ? best : "";
     }
 
