@@ -16,7 +16,7 @@ export function Analytics() {
   return (
     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
       <Card glow>
-        <Eyebrow dot="var(--cyan)">Where your charge level lives · {a.sampleDays} days</Eyebrow>
+        <Eyebrow dot="var(--cyan)">Where your charge level lives · {a.sampleDays} {a.sampleDays === 1 ? "day" : "days"}</Eyebrow>
         <Histogram values={a.histogram} labels={['0', '10', '20', '30', '40', '50', '60', '70', '80', '90']} highlightFrom={8} height={220} />
         <div className="body" style={{ marginTop: 14, fontSize: 12.5 }}>
           <b style={{ color: highShare > 50 ? 'var(--amber)' : 'var(--mint)' }}>{Math.round(highShare)}%</b> of the time above 80%. Batteries last longest spending most time between 30% and 80%.
