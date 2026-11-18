@@ -48,11 +48,14 @@ public sealed class Store : IDisposable
     }
 
     /// <summary>A private, up-to-date copy of the live history for read-only users such as the MCP server.</summary>
-    public static Store OpenCopyOfLive()
+    public static Store OpenCopyOfLive(string? from = null)
     {
-        var folder = Path.Combine(Path.GetTempPath(), "GuardianX-read", Environment.ProcessId.ToString());
-        return new Store(CopyLiveTo(folder));
+        // One folder per open, so concurrent readers never delete each other's copy. Removed on Dispose.
+        var folder = Path.Combine(Path.GetTempPath(), "GuardianX-read", Guid.NewGuid().ToString("N"));
+        return new Store(CopyLiveTo(folder, from)) { _ownedFolder = folder };
     }
+
+    private string? _ownedFolder;
 
     public string DbPath { get; }
     private readonly SqliteConnection _db;
@@ -407,6 +410,8 @@ public sealed class Store : IDisposable
     public void Dispose()
     {
         _db.Dispose();
-        SqliteConnection.ClearAllPools();
+        if (_ownedFolder is null) { SqliteConnection.ClearAllPools(); return; }
+        SqliteConnection.ClearPool(_db);
+        try { Directory.Delete(_ownedFolder, true); } catch { }
     }
 }

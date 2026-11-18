@@ -152,6 +152,13 @@ public class AppTests
             using (var reader = new Store(path))
                 Assert.Equal(50, reader.Samples(start.AddMinutes(-1), DateTimeOffset.Now).Count);
 
+            // Concurrent readers (the MCP server answering two tools at once) each get their own copy.
+            Parallel.For(0, 8, _ =>
+            {
+                using var r = Store.OpenCopyOfLive(live);
+                Assert.Equal(50, r.SampleCount());
+            });
+
             // The live database is untouched and still works.
             Assert.Equal(liveBytes, new FileInfo(Path.Combine(live, "guardian.db")).Length);
             Assert.Equal(50, app.SampleCount());
