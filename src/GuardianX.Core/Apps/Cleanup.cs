@@ -94,7 +94,11 @@ public static class Cleanup
         var deadline = DateTime.UtcNow + (budget ?? TimeSpan.FromSeconds(20));
         long min = (long)(minGb * 1073741824);
         var found = new List<BigFile>();
-        var skip = new[] { "\\Windows", "\\Program Files", "\\Program Files (x86)", "\\ProgramData", "\\$Recycle.Bin", "\\System Volume Information", "\\AppData", "\\Recovery", "\\pagefile.sys", "\\hiberfil.sys", "\\swapfile.sys" };
+        // Windows, installed programs and game libraries hold files that break things if removed: never suggest them.
+        var skip = new[] { "\\Windows", "\\Program Files", "\\Program Files (x86)", "\\ProgramData", "\\$Recycle.Bin", "\\System Volume Information",
+            "\\AppData", "\\Recovery", "\\WindowsApps", "\\XboxGames", "\\Riot Games", "\\SteamLibrary", "\\steamapps", "\\Steam",
+            "\\Epic Games", "\\EA Games", "\\Ubisoft", "\\GOG Games", "\\Battle.net", "\\node_modules", "\\.git", "\\$WinREAgent" };
+        var skipExt = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".dll", ".sys", ".pak", ".ucas", ".utoc", ".sig", ".bundle", ".vpk", ".assets", ".resource", ".wim", ".esd" };
         var roots = new List<string> { Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) };
         var systemRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
         roots.AddRange(DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType == DriveType.Fixed &&
@@ -109,7 +113,7 @@ public static class Cleanup
             {
                 var di = new DirectoryInfo(dir);
                 foreach (var f in di.EnumerateFiles("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System }))
-                    if (f.Length >= min) found.Add(new BigFile(f.FullName, f.Name, Math.Round(f.Length / 1073741824.0, 2), f.LastWriteTime));
+                    if (f.Length >= min && !skipExt.Contains(f.Extension)) found.Add(new BigFile(f.FullName, f.Name, Math.Round(f.Length / 1073741824.0, 2), f.LastWriteTime));
                 foreach (var d in di.EnumerateDirectories("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System }))
                     stack.Push(d.FullName);
             }
