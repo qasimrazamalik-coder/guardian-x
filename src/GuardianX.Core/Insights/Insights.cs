@@ -159,10 +159,10 @@ public static class BatteryInsights
     {
         var tips = new List<Tip>();
         if (wear.WearPer100Cycles is double w && w > TypicalWearPer100Cycles * 2)
-            tips.Add(new Tip(TipLevel.Alert, "Your battery is ageing from time, not use",
+            tips.Add(new Tip(TipLevel.Alert, "Your battery is wearing faster than its cycles explain",
                 $"It has lost {wear.WearPercent:0.#}% in {wear.Cycles} cycles, about {w:0.#}% per 100 cycles. " +
-                $"A typical battery loses about {TypicalWearPer100Cycles:0}% per 100 cycles. That pattern usually means hours " +
-                "spent at 100% on the charger and heat from gaming. Unplugging when you don't need a full battery is the biggest fix."));
+                $"A typical battery loses about {TypicalWearPer100Cycles:0}% per 100 cycles, so most of this wear isn't from use. " +
+                "The usual causes are heat from long gaming sessions and sitting at 100% for hours. The History tab shows when the biggest drop happened."));
         if (chargerHoursPerDay is double ch && ch >= 16)
             tips.Add(new Tip(TipLevel.Warn, $"Plugged in about {ch:0} hours a day",
                 $"Windows' own battery records show your laptop switched on and plugged in for {ch:0.#} hours a day over the last week. " +
