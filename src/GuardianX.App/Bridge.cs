@@ -20,7 +20,11 @@ namespace GuardianX.App;
 public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<string?> saveDialog)
 {
     public const string RepoUrl = "https://github.com/qasimrazamalik-coder/guardian-x";
-    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        // Enums (power overlay, tip level) reach the interface as names, not numbers.
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     private readonly Ollama _ollama = new();
     private GuardianAssistant? _assistant;
     private GuardianAssistant Assistant => _assistant ??= new GuardianAssistant(monitor.Store, _ollama);
