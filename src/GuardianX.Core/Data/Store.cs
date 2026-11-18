@@ -47,12 +47,49 @@ public sealed class Store : IDisposable
         return Path.Combine(folder, "guardian.db");
     }
 
-    /// <summary>A private, up-to-date copy of the live history for read-only users such as the MCP server.</summary>
-    public static Store OpenCopyOfLive(string? from = null)
+    public const string SnapshotName = "snapshot.db";
+
+    /// <summary>
+    /// A private copy of the history for read-only users such as the MCP server. While Guardian X runs it reads the
+    /// consistent snapshot the app writes every few minutes (a copy of a database that's being written can tear);
+    /// when the app isn't running nothing writes, so the database and its log can be copied as they are.
+    /// </summary>
+    public static Store OpenCopyOfLive(string? from = null, bool? appRunning = null)
     {
+        from ??= LiveFolder;
         // One folder per open, so concurrent readers never delete each other's copy. Removed on Dispose.
         var folder = Path.Combine(Path.GetTempPath(), "GuardianX-read", Guid.NewGuid().ToString("N"));
-        return new Store(CopyLiveTo(folder, from)) { _ownedFolder = folder };
+        Directory.CreateDirectory(folder);
+        bool running = appRunning ?? System.Diagnostics.Process.GetProcessesByName("GuardianX").Length > 0;
+        var snapshot = Path.Combine(from, SnapshotName);
+        string path;
+        if (running && File.Exists(snapshot))
+        {
+            path = Path.Combine(folder, "guardian.db");
+            using (var input = new FileStream(snapshot, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var output = File.Create(path)) input.CopyTo(output);
+            var settings = Path.Combine(from, "settings.json");
+            if (File.Exists(settings)) File.Copy(settings, Path.Combine(folder, "settings.json"), true);
+        }
+        else path = CopyLiveTo(folder, from);
+        // If the copy still came out torn (the app had only just started), recovery salvages what it can.
+        return new Store(path) { _ownedFolder = folder };
+    }
+
+    /// <summary>Writes a consistent copy of the whole database (SQLite VACUUM INTO), replacing the old one atomically.</summary>
+    public void WriteSnapshot(string? path = null)
+    {
+        path ??= Path.Combine(Path.GetDirectoryName(DbPath)!, SnapshotName);
+        var tmp = path + ".tmp";
+        lock (_lock)
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = "VACUUM INTO $p";
+            cmd.Parameters.AddWithValue("$p", tmp);
+            cmd.ExecuteNonQuery();
+        }
+        File.Move(tmp, path, overwrite: true);
     }
 
     private string? _ownedFolder;
@@ -61,14 +98,138 @@ public sealed class Store : IDisposable
     private readonly SqliteConnection _db;
     private readonly object _lock = new();
 
+    /// <summary>Set when the database was damaged and rebuilt on open: what was recovered and where the damaged copy is.</summary>
+    public string? Recovery { get; }
+
     public Store(string? dbPath = null)
     {
         DbPath = dbPath ?? Path.Combine(DefaultFolder, "guardian.db");
         Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        Recovery = RecoverIfDamaged(DbPath);
         _db = new SqliteConnection($"Data Source={DbPath}");
         _db.Open();
         Exec("PRAGMA journal_mode=WAL;");
-        Exec("""
+        CreateSchema();
+    }
+
+    private static readonly string[] Tables = { "samples", "events", "gpu", "report", "app_energy" };
+
+    /// <summary>
+    /// Checks the database before use. If SQLite reports damage, the damaged files are moved (never deleted) into a
+    /// "damaged-…" folder next to it, every row that can still be read is copied into a fresh database, and a
+    /// description of what was recovered is returned.
+    /// </summary>
+    internal static string? RecoverIfDamaged(string dbPath)
+    {
+        if (!File.Exists(dbPath)) return null;
+        string? problem = null;
+        try
+        {
+            using var check = new SqliteConnection($"Data Source={dbPath};Pooling=False");
+            check.Open();
+            using var cmd = check.CreateCommand();
+            cmd.CommandText = "PRAGMA quick_check";
+            var result = Convert.ToString(cmd.ExecuteScalar());
+            if (result != "ok") problem = result;
+            else
+            {
+                // quick_check doesn't read every table's rows; touch each one so a broken page is found now, not later.
+                foreach (var t in Tables)
+                {
+                    cmd.CommandText = $"SELECT name FROM sqlite_master WHERE type='table' AND name='{t}'";
+                    if (cmd.ExecuteScalar() is null) continue;
+                    cmd.CommandText = $"SELECT COUNT(*) FROM {t}";
+                    cmd.ExecuteScalar();
+                }
+            }
+        }
+        // Only real damage (SQLITE_CORRUPT, SQLITE_NOTADB). A locked or busy file is not a reason to touch anything.
+        catch (SqliteException e) when (e.SqliteErrorCode is 11 or 26) { problem = e.Message; }
+        if (problem is null) return null;
+
+        var dir = Path.GetDirectoryName(dbPath)!;
+        var backup = Path.Combine(dir, $"damaged-{DateTime.Now:yyyyMMdd-HHmmss}");
+        Directory.CreateDirectory(backup);
+        var name = Path.GetFileName(dbPath);
+        try
+        {
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+                if (File.Exists(dbPath + suffix)) File.Move(dbPath + suffix, Path.Combine(backup, name + suffix));
+        }
+        catch (IOException)
+        {
+            // Another process has it open. Put back anything already moved and carry on with the database as it is.
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+                if (File.Exists(Path.Combine(backup, name + suffix)) && !File.Exists(dbPath + suffix)) File.Move(Path.Combine(backup, name + suffix), dbPath + suffix);
+            try { Directory.Delete(backup); } catch { }
+            return null;
+        }
+
+        // Read from a scratch copy so the backup stays exactly as it was found.
+        var work = Path.Combine(Path.GetTempPath(), "GuardianX-recover", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(work);
+        foreach (var suffix in new[] { "", "-wal" })
+            if (File.Exists(Path.Combine(backup, name + suffix))) File.Copy(Path.Combine(backup, name + suffix), Path.Combine(work, name + suffix));
+
+        var counts = new Dictionary<string, int>();
+        using (var fresh = new SqliteConnection($"Data Source={dbPath};Pooling=False"))
+        {
+            fresh.Open();
+            using (var c = fresh.CreateCommand()) { c.CommandText = "PRAGMA journal_mode=WAL;" + Schema; c.ExecuteNonQuery(); }
+            try
+            {
+                using var old = new SqliteConnection($"Data Source={Path.Combine(work, name)};Pooling=False");
+                old.Open();
+                foreach (var t in Tables) counts[t] = Salvage(old, fresh, t);
+            }
+            catch (SqliteException) { } // nothing readable at all: start fresh
+        }
+        SqliteConnection.ClearAllPools();
+        try { Directory.Delete(work, true); } catch { }
+        int samples = counts.GetValueOrDefault("samples"), periods = counts.GetValueOrDefault("report");
+        return $"The history database was damaged ({problem}). Recovered {samples} readings and {periods} Windows history periods. " +
+               $"The damaged copy is kept in {backup}.";
+    }
+
+    /// <summary>Copies every readable row of a table, stepping past unreadable stretches by rowid.</summary>
+    private static int Salvage(SqliteConnection old, SqliteConnection fresh, string table)
+    {
+        int copied = 0, failures = 0;
+        long after = long.MinValue;
+        long[] skips = { 1, 100, 10_000, 1_000_000 };
+        using var tx = fresh.BeginTransaction();
+        while (true)
+        {
+            try
+            {
+                using var read = old.CreateCommand();
+                read.CommandText = $"SELECT rowid, * FROM {table} WHERE rowid > $a ORDER BY rowid";
+                read.Parameters.AddWithValue("$a", after);
+                using var r = read.ExecuteReader();
+                while (r.Read())
+                {
+                    after = r.GetInt64(0);
+                    using var ins = fresh.CreateCommand();
+                    ins.Transaction = tx;
+                    var names = Enumerable.Range(1, r.FieldCount - 1).Select(i => "$p" + i).ToArray();
+                    ins.CommandText = $"INSERT OR IGNORE INTO {table} VALUES({string.Join(",", names)})";
+                    for (int i = 1; i < r.FieldCount; i++) ins.Parameters.AddWithValue(names[i - 1], r.GetValue(i));
+                    ins.ExecuteNonQuery();
+                    copied++;
+                }
+                break; // read to the end
+            }
+            catch (SqliteException)
+            {
+                if (failures >= skips.Length) break;
+                after = (after == long.MinValue ? 0 : after) + skips[failures++];
+            }
+        }
+        tx.Commit();
+        return copied;
+    }
+
+    private const string Schema = """
             CREATE TABLE IF NOT EXISTS samples(
               ts INTEGER PRIMARY KEY, pct REAL, remaining INTEGER, full INTEGER, design INTEGER, cycles INTEGER,
               rate INTEGER, voltage INTEGER, temp REAL, on_ac INTEGER, charging INTEGER);
@@ -79,9 +240,13 @@ public sealed class Store : IDisposable
               start TEXT, end TEXT PRIMARY KEY, full INTEGER, design INTEGER, cycles INTEGER,
               ac_active INTEGER, dc_active INTEGER, ac_standby INTEGER, dc_standby INTEGER);
             CREATE TABLE IF NOT EXISTS app_energy(day TEXT, app TEXT, name TEXT, mwh REAL, cpu REAL, PRIMARY KEY(day, app));
-            CREATE TABLE IF NOT EXISTS kb(id TEXT PRIMARY KEY, source TEXT, text TEXT, hash TEXT, vec BLOB);
             CREATE INDEX IF NOT EXISTS gpu_ts ON gpu(ts);
-            """);
+            """;
+
+    private void CreateSchema()
+    {
+        Exec(Schema);
+        Exec("DROP TABLE IF EXISTS kb;"); // search index of the old Ollama assistant, no longer used
     }
 
     public void Add(BatterySnapshot s)
@@ -317,39 +482,6 @@ public sealed class Store : IDisposable
             if (s[i - 1].OnAc) ac[wd, t.Hour] += m; else dc[wd, t.Hour] += m;
         }
         return (ac, dc);
-    }
-
-    public void SaveChunk(string id, string source, string text, string hash, float[]? vec)
-    {
-        lock (_lock)
-        {
-            using var cmd = _db.CreateCommand();
-            cmd.CommandText = "INSERT OR REPLACE INTO kb VALUES($i,$s,$t,$h,$v)";
-            cmd.Parameters.AddWithValue("$i", id);
-            cmd.Parameters.AddWithValue("$s", source);
-            cmd.Parameters.AddWithValue("$t", text);
-            cmd.Parameters.AddWithValue("$h", hash);
-            cmd.Parameters.AddWithValue("$v", vec is null ? DBNull.Value : System.Runtime.InteropServices.MemoryMarshal.AsBytes(vec.AsSpan()).ToArray());
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    public List<(string Id, string Source, string Text, string Hash, float[]? Vec)> Chunks()
-    {
-        lock (_lock)
-        {
-            using var cmd = _db.CreateCommand();
-            cmd.CommandText = "SELECT id, source, text, hash, vec FROM kb";
-            using var r = cmd.ExecuteReader();
-            var list = new List<(string, string, string, string, float[]?)>();
-            while (r.Read())
-            {
-                float[]? v = null;
-                if (!r.IsDBNull(4)) v = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(((byte[])r.GetValue(4)).AsSpan()).ToArray();
-                list.Add((r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), v));
-            }
-            return list;
-        }
     }
 
     public int SampleCount()

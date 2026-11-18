@@ -120,6 +120,7 @@ public sealed class GuardianMonitor : IDisposable
     private readonly HashSet<string> _gpuWarned = new(StringComparer.OrdinalIgnoreCase);
     private bool? _lastOnAc;
     private string? _modeBeforeGame;
+    private int _ticks;
     public bool GamingDetected { get; private set; }
     public string? LastAutoAction { get; private set; }
     private DateTime _lastReport = DateTime.MinValue;
@@ -136,6 +137,8 @@ public sealed class GuardianMonitor : IDisposable
 
     public void Start()
     {
+        if (Store.Recovery is string recovered)
+            Task.Delay(4000).ContinueWith(_ => Raise(new Alert("Guardian X repaired its history", recovered), sound: false));
         Store.Prune();
         Task.Run(() => { try { Sounds.Generate(); } catch { } });
         _timer.Change(TimeSpan.Zero, TimeSpan.FromMinutes(1));
@@ -179,6 +182,7 @@ public sealed class GuardianMonitor : IDisposable
             CheckFullHold(s);
             TrackApps(s);
             CheckWeeklyReport(s);
+            if (_ticks++ % 5 == 0) try { Store.WriteSnapshot(); } catch { } // consistent copy for the MCP server
             Updated?.Invoke(s);
         }
         catch (Exception e)

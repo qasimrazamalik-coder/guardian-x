@@ -275,6 +275,84 @@ public class SettingsTests
     }
 }
 
+public class RecoveryTests
+{
+    private static GuardianX.Core.Battery.BatterySnapshot Sample(DateTimeOffset t, double pct) =>
+        new(t, pct, 40000, 62900, 70070, 55, -12000, 15900, null, false, false, "LION", "HP", "Primary");
+
+    [Fact]
+    public void DamagedDatabaseIsMovedAsideAndSalvaged()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"gx-rec-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "guardian.db");
+        try
+        {
+            var start = DateTimeOffset.Now.AddDays(-2);
+            using (var store = new Store(path))
+                for (int i = 0; i < 3000; i++) store.Add(Sample(start.AddMinutes(i), 50 + i % 50));
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            // Wreck a stretch of pages in the middle of the file.
+            var bytes = File.ReadAllBytes(path);
+            Assert.True(bytes.Length > 40000);
+            for (int i = bytes.Length / 2; i < bytes.Length / 2 + 12000; i++) bytes[i] = 0xEE;
+            File.WriteAllBytes(path, bytes);
+
+            using var repaired = new Store(path);
+            Assert.NotNull(repaired.Recovery);
+            Assert.Contains("readings", repaired.Recovery);
+            Assert.Single(Directory.GetDirectories(dir, "damaged-*"));
+            Assert.True(File.Exists(Path.Combine(Directory.GetDirectories(dir, "damaged-*")[0], "guardian.db")));
+            int kept = repaired.SampleCount();
+            Assert.InRange(kept, 1, 2999);                 // some rows survive, the wrecked ones don't
+            Assert.Equal("ok", repaired.IntegrityCheck());
+            repaired.Add(Sample(DateTimeOffset.Now, 77));    // and it works for new readings
+            Assert.Equal(kept + 1, repaired.SampleCount());
+        }
+        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
+    public void HealthyDatabaseIsLeftAlone()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"gx-ok-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "guardian.db");
+            using (var s = new Store(path)) s.Add(Sample(DateTimeOffset.Now, 50));
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            using var again = new Store(path);
+            Assert.Null(again.Recovery);
+            Assert.Empty(Directory.GetDirectories(dir, "damaged-*"));
+            Assert.Equal(1, again.SampleCount());
+        }
+        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    [Fact]
+    public void ReadersUseTheSnapshotWhileTheAppRuns()
+    {
+        var live = Path.Combine(Path.GetTempPath(), $"gx-snap-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(live);
+        try
+        {
+            using var app = new Store(Path.Combine(live, "guardian.db"));
+            var t = DateTimeOffset.Now.AddHours(-3);
+            for (int i = 0; i < 20; i++) app.Add(Sample(t.AddMinutes(i), 60));
+            app.WriteSnapshot();
+            for (int i = 20; i < 30; i++) app.Add(Sample(t.AddMinutes(i), 60));
+            Assert.False(File.Exists(Path.Combine(live, Store.SnapshotName + ".tmp")));
+
+            using (var whileRunning = Store.OpenCopyOfLive(live, appRunning: true))
+                Assert.Equal(20, whileRunning.SampleCount());   // the consistent snapshot
+            using (var whenClosed = Store.OpenCopyOfLive(live, appRunning: false))
+                Assert.Equal(30, whenClosed.SampleCount());     // nothing writing, so the live files as they are
+        }
+        finally { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); try { Directory.Delete(live, true); } catch { } }
+    }
+}
+
 public class ReportTests
 {
     [Fact]
