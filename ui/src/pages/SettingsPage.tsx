@@ -1,16 +1,17 @@
 import { Bell, Database, Play, Rocket, Volume2, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Card, Eyebrow, Seg, Toggle } from '../components/ui'
-import { call } from '../lib/bridge'
+import { call, on } from '../lib/bridge'
 import type { Settings } from '../lib/types'
 
 export function SettingsPage({ version }: { version: string }) {
   const [s, setS] = useState<Settings | null>(null)
   const [msg, setMsg] = useState('')
   useEffect(() => { call<Settings>('settingsGet').then(setS) }, [])
+  useEffect(() => on('updateStatus', (d) => setMsg(String(d))), [])
   if (!s) return null
   const save = (patch: Partial<Settings>) => { const n = { ...s, ...patch }; setS(n); call('settingsSave', patch) }
-  const act = async (method: string) => { setMsg('…'); try { const r = await call<{ message?: string }>(method); setMsg(r?.message ?? 'Done.') } catch (e: any) { setMsg(e.message) } }
+  const act = async (method: string) => { setMsg(method === 'checkUpdate' ? 'Checking for updates…' : 'Working…'); try { const r = await call<{ message?: string }>(method); setMsg(r?.message ?? 'Done.') } catch (e: any) { setMsg(e.message) } }
   return (
     <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'start' }}>
       <div className="grid">
@@ -61,7 +62,7 @@ export function SettingsPage({ version }: { version: string }) {
             <button className="btn" onClick={() => act('repair')}>Repair</button>
             <button className="btn danger" onClick={() => act('quit')}>Quit Guardian X</button>
           </div>
-          {msg && <div className="body" style={{ marginTop: 12, whiteSpace: 'pre-line', color: 'var(--cyan)', userSelect: 'text' }}>{msg}</div>}
+          {msg && <div className="body" role="status" aria-live="polite" style={{ marginTop: 12, whiteSpace: 'pre-line', color: 'var(--cyan)', userSelect: 'text' }}>{msg}</div>}
           <div className="body" style={{ fontSize: 12, marginTop: 12 }}>Uninstall from Windows Settings › Apps › Installed apps › Guardian X. You'll be asked whether to keep your history.</div>
           <div className="num" style={{ fontSize: 11, color: 'var(--faint)', marginTop: 10 }}>Guardian X {version}</div>
         </Card>

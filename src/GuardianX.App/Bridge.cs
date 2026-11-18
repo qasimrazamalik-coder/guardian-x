@@ -390,7 +390,15 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         if (!mgr.IsInstalled) return Ok("Updates work in the installed app, not in a development build.");
         var info = await mgr.CheckForUpdatesAsync();
         if (info is null) return Ok("You're on the latest version.");
-        await mgr.DownloadUpdatesAsync(info);
+        var target = info.TargetFullRelease.Version;
+        int last = -1;
+        Emit("updateStatus", $"Downloading {target}…");
+        await mgr.DownloadUpdatesAsync(info, pct =>
+        {
+            if (pct / 5 == last / 5) return; // every 5% is plenty
+            last = pct;
+            Emit("updateStatus", $"Downloading {target}… {pct}%");
+        });
         _ = System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
         {
             mgr.WaitExitThenApplyUpdates(info, silent: false, restart: true);

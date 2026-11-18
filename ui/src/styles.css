@@ -58,7 +58,7 @@ body {
 .brand-mark { width: 34px; height: 34px; }
 .brand h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: 0.01em; }
 .brand small { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.08em; }
-.nav { position: relative; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 12px; color: var(--muted); cursor: pointer; font-size: 14px; transition: color .2s; }
+.nav { width: 100%; border: none; background: none; font: inherit; text-align: left; position: relative; display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 12px; color: var(--muted); cursor: pointer; font-size: 14px; transition: color .2s; }
 .nav:hover { color: var(--ink); }
 .nav.active { color: var(--ink); }
 .nav .pill { position: absolute; inset: 0; border-radius: 12px; background: linear-gradient(90deg, rgba(61,255,176,0.12), rgba(61,224,255,0.04)); border: 1px solid rgba(61, 255, 176, 0.18); z-index: -1; }
@@ -145,3 +145,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px;
 .source { font-family: var(--mono); font-size: 11px; color: var(--cyan); }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+button.chip { font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; cursor: pointer; }
+button.chip:hover { border-color: rgba(255,255,255,0.18); }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }

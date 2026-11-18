@@ -52,13 +52,13 @@ export function Charging({ d, refresh }: { d: Dashboard; refresh: () => void }) 
           {modes.map((m) => {
             const on = m.id === mode.id
             return (
-              <motion.div key={m.id} whileHover={{ y: -3 }} onClick={async () => { await call('setMode', { id: m.id }); refresh() }}
-                style={{ position: 'relative', cursor: 'pointer', padding: 16, borderRadius: 14, border: `1px solid ${on ? 'rgba(61,255,176,0.45)' : 'var(--line)'}`, background: on ? 'rgba(61,255,176,0.07)' : 'rgba(0,0,0,0.2)' }}>
+              <motion.button key={m.id} whileHover={{ y: -3 }} aria-pressed={on} onClick={async () => { await call('setMode', { id: m.id }); refresh() }}
+                style={{ position: 'relative', cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-start', width: '100%', padding: 16, borderRadius: 14, border: `1px solid ${on ? 'rgba(61,255,176,0.45)' : 'var(--line)'}`, background: on ? 'rgba(61,255,176,0.07)' : 'rgba(0,0,0,0.2)' }}>
                 <div style={{ color: on ? 'var(--mint)' : 'var(--muted)' }}>{icons[m.id]}</div>
                 <div style={{ fontWeight: 600, marginTop: 10 }}>{m.name}</div>
                 <div className="num muted" style={{ fontSize: 11, marginTop: 2 }}>{m.resumeAt}–{m.chargeLimit}% · {m.overlay}</div>
                 <div className="body" style={{ fontSize: 12, marginTop: 8 }}>{m.description}</div>
-              </motion.div>
+              </motion.button>
             )
           })}
         </div>

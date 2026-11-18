@@ -42,7 +42,7 @@ export function Apps() {
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
           <Eyebrow dot="var(--mint)">Apps · live {r.onBattery ? '· on battery, power estimated' : ''}</Eyebrow>
           <div className="row" style={{ gap: 12, marginBottom: 12 }}>
-            <span className="chip" style={{ cursor: 'pointer', color: showSystem ? 'var(--cyan)' : 'var(--muted)' }} onClick={() => setShowSystem(!showSystem)}>{showSystem ? 'hide' : 'show'} Windows processes</span>
+            <button className="chip" style={{ color: showSystem ? 'var(--cyan)' : 'var(--muted)' }} aria-pressed={showSystem} onClick={() => setShowSystem(!showSystem)}>{showSystem ? 'hide' : 'show'} Windows processes</button>
             <Seg layoutId="sort" value={sort} onChange={setSort} options={[{ value: 'ram', label: 'RAM' }, { value: 'cpu', label: 'CPU' }, { value: 'disk', label: 'Disk' }, { value: 'power', label: 'Battery' }]} />
           </div>
         </div>

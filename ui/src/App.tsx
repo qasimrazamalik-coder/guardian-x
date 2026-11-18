@@ -44,10 +44,10 @@ export default function App() {
         <nav className="rail">
           <div className="brand"><Logo /><div><h1>Guardian X</h1><small>BATTERY COACH · v{d?.version ?? '2'}</small></div></div>
           {pages.map((p) => (
-            <div key={p.id} className={`nav ${page === p.id ? 'active' : ''}`} onClick={() => setPage(p.id)}>
+            <button key={p.id} className={`nav ${page === p.id ? 'active' : ''}`} onClick={() => setPage(p.id)} aria-current={page === p.id ? 'page' : undefined}>
               {page === p.id && <motion.div layoutId="navpill" className="pill" transition={{ type: 'spring', stiffness: 420, damping: 36 }} />}
-              <p.icon size={18} /> {p.label}
-            </div>
+              <p.icon size={18} aria-hidden /> {p.label}
+            </button>
           ))}
           <div className="rail-foot">
             {b?.model}<br />{b ? `${b.manufacturer} ${b.chemistry} · ${b.designWh.toFixed(1)} Wh new` : ''}<br />{inHost ? 'data stays on this PC' : 'preview data'}

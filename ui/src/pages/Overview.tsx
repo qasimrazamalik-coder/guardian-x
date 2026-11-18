@@ -125,8 +125,8 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <Eyebrow><Zap size={13} /> What to do</Eyebrow>
           <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-            <span className="chip" style={{ color: 'var(--mint)', cursor: 'pointer' }} onClick={() => go('charging')}><BatteryCharging size={12} /> {d.mode.name} mode · {d.mode.resumeAt}–{d.mode.chargeLimit}%</span>
-            <span className="chip" style={{ color: d.plug.configured ? 'var(--cyan)' : 'var(--muted)', cursor: 'pointer' }} onClick={() => go('charging')}><Thermometer size={12} /> {d.plug.configured ? d.plug.status : 'No smart plug'}</span>
+            <button className="chip" style={{ color: 'var(--mint)' }} onClick={() => go('charging')}><BatteryCharging size={12} /> {d.mode.name} mode · {d.mode.resumeAt}–{d.mode.chargeLimit}%</button>
+            <button className="chip" style={{ color: d.plug.configured ? 'var(--cyan)' : 'var(--muted)' }} onClick={() => go('charging')}><Thermometer size={12} /> {d.plug.configured ? d.plug.status : 'No smart plug'}</button>
           </div>
         </div>
         {d.tips.map((t) => (
