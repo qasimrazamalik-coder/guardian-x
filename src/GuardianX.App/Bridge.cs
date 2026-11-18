@@ -121,7 +121,10 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
                 tempC = s.TemperatureC,
                 remainingWh = s.RemainingMWh / 1000.0, fullWh = s.FullMWh / 1000.0, designWh = s.DesignMWh / 1000.0, cycles = s.Cycles,
                 health = wear.HealthPercent, wear = wear.WearPercent, wearPer100 = wear.WearPer100Cycles, wearPerMonth = wear.WearPerMonth,
-                hoursLeft = BatteryInsights.HoursLeft(s.RemainingMWh, s.FullMWh, s.RateMw),
+                // Charging: the forecast's time to full (slower above 80%), so every card agrees.
+                hoursLeft = s.RateMw > 0
+                    ? BatteryInsights.Forecast(wear, s, 100, now).HoursToFull
+                    : BatteryInsights.HoursLeft(s.RemainingMWh, s.FullMWh, s.RateMw),
                 model = Model, chemistry = s.Chemistry, manufacturer = s.Manufacturer,
             };
         }

@@ -18,7 +18,7 @@ const pages = [
   { id: 'analytics', label: 'Analytics', icon: BarChart3, sub: 'Charging habits, usage patterns, app energy' },
   { id: 'apps', label: 'Apps & storage', icon: AppWindow, sub: 'RAM, CPU, disk and battery by app' },
   { id: 'charging', label: 'Charging', icon: BatteryCharging, sub: 'Modes, 80% limit and smart plug' },
-  { id: 'assistant', label: 'Assistant', icon: Bot, sub: 'Local AI that knows your battery' },
+  { id: 'assistant', label: 'Assistant', icon: Bot, sub: 'Answers from your own battery data, on this PC' },
   { id: 'settings', label: 'Settings', icon: Cog, sub: 'Alerts, sounds, data and maintenance' },
 ]
 
