@@ -53,7 +53,7 @@ public sealed class PowerSampler
 
 public static class PowerSmoothing
 {
-    public static readonly TimeSpan Window = TimeSpan.FromMinutes(6);
+    public static readonly TimeSpan Window = TimeSpan.FromMinutes(3); // 6 min lagged load changes by several watts on the Omen; its counter updates every ~30 s, so 3 min still has many points
     public static readonly TimeSpan MinSpan = TimeSpan.FromSeconds(90);
 
     /// <summary>

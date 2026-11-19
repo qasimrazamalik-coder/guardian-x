@@ -47,6 +47,23 @@ public class PowerSmoothingTests
     }
 
     [Fact]
+    public void FollowsALoadDropWithinThreeMinutes()
+    {
+        // Seen on the Omen: about 28 W, then the load dropped to about 14 W.
+        var list = new List<PowerPoint>();
+        double mwh = 50000;
+        for (int t = 360; t >= 0; t -= 5)
+        {
+            double w = t > 185 ? 28 : 14;
+            list.Add(new PowerPoint(Now.AddSeconds(-t), (int)Math.Round(mwh), (int)(-w * 1000), false));
+            mwh -= w * 1000 * 5 / 3600.0;
+        }
+        var r = PowerSmoothing.Compute(list, -14000, Now);
+        Assert.Equal("energy", r.Method);
+        Assert.InRange(r.RateMw!.Value / 1000, -14.6, -13.4);
+    }
+
+    [Fact]
     public void ChargerChangeInTheWindowFallsBackToTheDriverRate()
     {
         var points = Discharge(15, 360, i => i > 40); // plugged in part-way through
