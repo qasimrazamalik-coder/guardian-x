@@ -1,80 +1,106 @@
-import { animate, motion, useMotionValue, useTransform } from 'framer-motion'
+import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'framer-motion'
 import { ReactNode, useEffect, useState } from 'react'
 
-export function Card({ children, className = '', glow, style, delay = 0 }: { children: ReactNode; className?: string; glow?: boolean; style?: React.CSSProperties; delay?: number }) {
+/** A faceplate panel. `hero` gives it the cobalt top rule used for the one most important panel on a page. */
+export function Card({ children, className = '', hero, style, title, icon, meta, mark, as = 'section' }: {
+  children: ReactNode; className?: string; hero?: boolean; style?: React.CSSProperties
+  title?: ReactNode; icon?: ReactNode; meta?: ReactNode; mark?: string; as?: 'section' | 'div'
+}) {
+  const Tag = as
   return (
-    <motion.div
-      className={`card ${glow ? 'glow' : ''} ${className}`}
-      style={style}
-      initial={{ opacity: 0, y: 14, scale: 0.99 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.5, delay, ease: [0.2, 0.8, 0.2, 1] }}
-    >
+    <Tag className={`card ${hero ? 'hero' : ''} ${className}`} style={style}>
+      {title != null && (
+        <div className="card-head">
+          <h3 className="card-title">{mark && <span className="mark" style={{ background: mark }} aria-hidden />}{icon}{title}</h3>
+          {meta != null && <div className="row wrap" style={{ gap: 8 }}>{meta}</div>}
+        </div>
+      )}
       {children}
-    </motion.div>
+    </Tag>
   )
 }
 
+/** Stand-alone panel heading (sentence case, no tracking). */
 export const Eyebrow = ({ children, dot }: { children: ReactNode; dot?: string }) => (
-  <div className="eyebrow">{dot && <span className="dot" style={{ background: dot, boxShadow: `0 0 10px ${dot}` }} />}{children}</div>
+  <h3 className="card-title">{dot && <span className="mark" style={{ background: dot }} aria-hidden />}{children}</h3>
 )
 
-/** Number that glides to its new value instead of jumping. */
+/** Number that glides to its new value instead of jumping (instant with reduced motion). */
 export function Counter({ value, decimals = 0, suffix = '' }: { value: number | null | undefined; decimals?: number; suffix?: string }) {
-  const mv = useMotionValue(0)
+  const reduce = useReducedMotion()
+  const mv = useMotionValue(value ?? 0)
   const text = useTransform(mv, (v) => v.toFixed(decimals) + suffix)
   useEffect(() => {
     if (value == null) return
-    const c = animate(mv, value, { duration: 1.1, ease: [0.2, 0.8, 0.2, 1] })
+    if (reduce) { mv.set(value); return }
+    const c = animate(mv, value, { duration: 0.9, ease: [0.2, 0.8, 0.2, 1] })
     return c.stop
-  }, [value])
+  }, [value, reduce])
   if (value == null) return <span>—</span>
   return <motion.span>{text}</motion.span>
 }
 
-export function Toggle({ on, onChange, label, hint }: { on: boolean; onChange: (v: boolean) => void; label: ReactNode; hint?: ReactNode }) {
+export function Toggle({ on, onChange, label, hint, disabled }: { on: boolean; onChange: (v: boolean) => void; label: ReactNode; hint?: ReactNode; disabled?: boolean }) {
   return (
-    <div className={`toggle ${on ? 'on' : ''}`} onClick={() => onChange(!on)} role="switch" aria-checked={on} tabIndex={0}
-      onKeyDown={(e) => (e.key === ' ' || e.key === 'Enter') && onChange(!on)}>
-      <div>
-        <div>{label}</div>
-        {hint && <div className="body" style={{ fontSize: 12.5, marginTop: 2 }}>{hint}</div>}
-      </div>
-      <div className="track"><div className="knob" /></div>
-    </div>
+    <button type="button" className="toggle" role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)}>
+      <span className="t-text">
+        <span className="t-label" style={{ display: 'block' }}>{label}</span>
+        {hint && <span className="t-hint" style={{ display: 'block' }}>{hint}</span>}
+      </span>
+      <span className="track" aria-hidden><span className="knob" /></span>
+    </button>
   )
 }
 
-export function Seg<T extends string>({ value, options, onChange, layoutId }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; layoutId: string }) {
+export function Seg<T extends string>({ value, options, onChange, layoutId, label }: { value: T; options: { value: T; label: ReactNode }[]; onChange: (v: T) => void; layoutId: string; label?: string }) {
   return (
-    <div className="seg">
+    <div className="seg" role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={o.value} className={o.value === value ? 'on' : ''} onClick={() => onChange(o.value)}>
-          {o.value === value && <motion.span layoutId={layoutId} className="seg-pill" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
-          {o.label}
+        <button type="button" key={o.value} aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+          {o.value === value && <motion.span layoutId={layoutId} className="seg-pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} />}
+          <span>{o.label}</span>
         </button>
       ))}
     </div>
   )
 }
 
-export function Stat({ label, value, unit, color }: { label: string; value: ReactNode; unit?: string; color?: string }) {
+export function Stat({ label, value, unit, color, sub, title }: { label: ReactNode; value: ReactNode; unit?: string; color?: string; sub?: ReactNode; title?: string }) {
   return (
-    <div>
-      <div className="eyebrow" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="num" style={{ fontSize: 20, color: color ?? 'var(--ink)' }}>{value}{unit && <span className="muted" style={{ fontSize: 12, marginLeft: 4 }}>{unit}</span>}</div>
+    <div className="stat" title={title}>
+      <div className="k">{label}</div>
+      <div className="v" style={{ color: color ?? 'var(--ink)' }}>{value}{unit && <span className="unit">{unit}</span>}</div>
+      {sub != null && <div className="s">{sub}</div>}
     </div>
   )
 }
 
-export function Bar({ value, max = 100, color }: { value: number; max?: number; color?: string }) {
+export function Bar({ value, max = 100, color, label }: { value: number; max?: number; color?: string; label?: string }) {
+  const pct = Math.min(100, Math.max(0, (value / Math.max(max, 0.0001)) * 100))
   return (
-    <div className="bar">
-      <motion.i initial={{ width: 0 }} animate={{ width: `${Math.min(100, (value / Math.max(max, 0.0001)) * 100)}%` }}
-        transition={{ duration: 0.9, ease: [0.2, 0.8, 0.2, 1] }} style={color ? { background: color } : undefined} />
+    <div className="bar" role={label ? 'img' : undefined} aria-label={label}>
+      <motion.i initial={false} animate={{ width: `${pct}%` }} transition={{ duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }} style={color ? { background: color } : undefined} />
     </div>
   )
 }
+
+export function Skel({ h = 14, w = '100%', r }: { h?: number | string; w?: number | string; r?: number }) {
+  return <div className="skel" style={{ height: h, width: w, borderRadius: r }} aria-hidden />
+}
+
+/** Placeholder panel with the same footprint as the real one, so nothing jumps when data arrives. */
+export function SkelCard({ lines = 3, chart = 0, className = '', style }: { lines?: number; chart?: number; className?: string; style?: React.CSSProperties }) {
+  return (
+    <div className={`card skel-card ${className}`} style={style} aria-hidden>
+      <Skel h={14} w="38%" />
+      {chart > 0 && <Skel h={chart} r={6} />}
+      {Array.from({ length: lines }, (_, i) => <Skel key={i} h={12} w={`${90 - i * 14}%`} />)}
+    </div>
+  )
+}
+
+/** Polite live region announcing that a page is loading. */
+export const Loading = ({ what }: { what: string }) => <div role="status" className="sr-only">Loading {what}…</div>
 
 /** Re-renders on an interval, e.g. to refresh live data. */
 export function useTicker(ms: number) {

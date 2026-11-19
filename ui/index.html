@@ -3,8 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Guardian X</title>
     <link rel="icon" href="./favicon.ico" />
+    <script>
+      // Paint in the last theme before anything loads, so there is no light/dark flash.
+      (function () {
+        var c = 'system'
+        try { c = localStorage.getItem('gx-theme') || 'system' } catch (e) {}
+        var dark = c === 'dark' || (c !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -10,15 +10,40 @@ const modes = [
 let mode = 'desk'
 let plug = { kind: 'none', host: '', username: '', hasPassword: false }
 let plugOn: boolean | null = null
+// ?variant=asus previews an ASUS laptop on battery while a game runs (native charge limit, gaming indicator).
+const variant = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('variant') : null
+let asusLimit = true
+const cachedTheme = (() => { try { return localStorage.getItem('gx-theme') ?? 'system' } catch { return 'system' } })()
 
 function dashboard(): Dashboard {
+  const asus = variant === 'asus'
   return {
     battery: {
-      percent: 100, onAc: true, charging: false, rateW: 0, voltage: 17.21, tempC: null,
-      remainingWh: 62.86, fullWh: 62.86, designWh: 70.07, cycles: 54,
-      health: 89.7, wear: 10.3, wearPer100: 19.0, wearPerMonth: 3.3, hoursLeft: null,
-      model: 'OMEN Gaming Laptop 16-am0xxx', chemistry: 'LION', manufacturer: 'HP',
+      percent: asus ? 64 : 100, onAc: !asus, charging: false, rateW: asus ? -38.6 : 0.0, rateRawW: asus ? -44.1 : 0.4, rateMethod: 'energy', voltage: asus ? 15.62 : 17.21, tempC: null,
+      remainingWh: asus ? 40.2 : 62.86, fullWh: 62.86, designWh: 70.07, cycles: 54,
+      health: 89.7, wear: 10.3, wearPer100: 19.0, wearPerMonth: 3.3, hoursLeft: asus ? 1.04 : null,
+      model: asus ? 'ROG Strix G16 G614JV' : 'OMEN Gaming Laptop 16-am0xxx', chemistry: 'LION', manufacturer: asus ? 'ASUSTeK' : 'HP',
+      healthPrecise: 89.71, healthLow: 88.14, healthHigh: 90.62, lastCalibrated: asus ? null : '2026-10-28',
     },
+    heat: asus
+      ? { tempC: 47.5, source: 'thermal-zone', level: 'hot', score: 81, cpuPercent: 64, gpuBusy: true, chargingW: null, basis: 'Read from the Windows thermal zone next to the battery, with the GPU busy and CPU at 64%.' }
+      : { tempC: null, source: 'estimate', level: 'warm', score: 46, cpuPercent: 18, gpuBusy: false, chargingW: 0, basis: 'This OMEN exposes no battery temperature, so it is estimated from CPU load (18%), an idle GPU and no charging power.' },
+    habit: {
+      score: 58, grade: 'C', change: 6,
+      factors: [
+        { name: 'Time at 100%', impact: 22, detail: 'About 5.6 h a day sitting full on the charger.' },
+        { name: 'Heat while charging', impact: 12, detail: 'Charged while gaming on 3 of the last 7 days.' },
+        { name: 'Hours plugged in', impact: 8, detail: '16.3 h a day on the charger.' },
+        { name: 'Deep discharges', impact: 0, detail: 'Never went below 15% this week.' },
+      ],
+    },
+    pattern: asus
+      ? { usualUnplug: '09:40', usualPlugIn: '13:15', lastsUntilPlugIn: false, readyBy: null, message: 'At this draw the charge runs out around 11:50, before you usually plug in at 13:15. Switch to Saver or plug in sooner.' }
+      : { usualUnplug: '09:40', usualPlugIn: '13:15', lastsUntilPlugIn: null, readyBy: { time: '09:40', percent: 80 }, message: 'You usually unplug around 09:40 on weekdays. In Desk mode it will be at 80% by then, which is plenty for your usual 3½ hours away.' },
+    vendor: asus
+      ? { brand: 'ASUS', nativeLimit: 'asus', limitActive: asusLimit, note: 'This ASUS laptop has a built-in charge limit (Battery Health Charging). Guardian X can switch it for you, no plug needed.' }
+      : { brand: 'HP', nativeLimit: null, limitActive: null, note: 'HP offers a built-in charge limit only on business laptops, not on OMEN, so no app can stop charging inside this laptop. A smart plug cuts power at the wall instead.' },
+    gaming: asus,
     stress: { score: 34, level: 'Medium', hoursFull: 5.6, hoursHot: 0, hoursLow: 0, tempKnown: false },
     holdMinutes: 214,
     chargerHours: 16.3,
@@ -35,8 +60,8 @@ function dashboard(): Dashboard {
       : { configured: true, name: plug.kind === 'simulated' ? 'Simulated plug' : `${plug.kind} at ${plug.host}`, on: plugOn, status: plugOn ? 'On, charging allowed' : 'Off, holding the battery', lastAction: null },
     chargeLimitOn: true,
     chargeToFull: false,
-    forecast: { healthNow: 89.7, lossPerMonth: 3.3, healthAt80On: '2027-02-15', monthsTo80: 2.9, hoursToEmpty: null, hoursToFull: null, hoursToLimit: null, percentAtNight: null, basis: 'Health trend measured over 120 days; live times use the current 0.0 W.' },
-    auto: { last: '14:02 Switched to Desk mode (charger connected).', gaming: false, quiet: false },
+    forecast: { healthNow: 89.7, lossPerMonth: 3.3, healthAt80On: '2027-02-15', monthsTo80: 2.9, hoursToEmpty: asus ? 1.04 : null, hoursToFull: null, hoursToLimit: null, percentAtNight: asus ? 0 : null, basis: 'Health trend measured over 120 days; live times use the current 0.0 W.' },
+    auto: { last: '14:02 Switched to Desk mode (charger connected).', gaming: variant === 'asus', quiet: false },
     error: null,
     version: '2.1.0',
   }
@@ -154,7 +179,7 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
     case 'history': return history()
     case 'analytics': return analytics()
     case 'apps': return apps()
-    case 'storage': return storage()
+    case 'storage': await delay(2200); return storage()
     case 'modes': return { modes, current: mode, applyPowerMode: true, powerOverlay: 'Balanced' }
     case 'setMode': mode = params.id; return { ok: true }
     case 'plugGet': return { config: plug, state: dashboard().plug }
@@ -166,12 +191,20 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
         notifySleepDrain: true, notifyGpu: true, soundsOn: true, soundPack: 'aurora', plugSounds: true, mode, applyPowerMode: true, chargeLimitOn: true,
         quietHoursOn: true, quietFrom: 23, quietTo: 7, autoModeOnPower: true, acMode: 'desk', batteryMode: 'saver', autoGamingMode: true,
         autoEfficiencyOnBattery: true, efficiencyApps: [...efficient], weeklyReportOn: true, widgetOn: false, packs: ['aurora', 'crystal', 'pulse', 'nebula'],
+        smartLowAlert: true, toastsOn: true, theme: cachedTheme,
       }
       return { ...settingsState, mode }
-    case 'settingsSave': settingsState = { ...settingsState, ...params }; return { ok: true }
+    case 'settingsSave':
+      settingsState = { ...settingsState, ...params }
+      if (params?.theme) setTimeout(() => emit('theme', { theme: params.theme }), 0)
+      return { ok: true }
+    case 'setVendorLimit':
+      if (variant !== 'asus') return { ok: false, message: 'This laptop has no built-in charge limit Guardian X can switch. Use a smart plug instead.' }
+      asusLimit = !!params?.on
+      return { ok: true, message: asusLimit ? 'Built-in limit on: the battery stops charging at 80%.' : 'Built-in limit off: the battery charges to 100%.' }
     case 'assistantStatus': return { ready: true, engine: 'local', sections: 41 }
     case 'setEfficiency': if (params.on) efficient.add(params.app); else efficient.delete(params.app); return { ok: true, message: params.on ? 'Efficiency mode on for 7 processes. Guardian X keeps it on while you\'re on battery.' : 'Efficiency mode off.' }
-    case 'tempScan': return { sizeGb: 0.55, files: 1834, recycleBinGb: 2.1, recycleBinItems: 37 }
+    case 'tempScan': await delay(2600); return { sizeGb: 0.55, files: 1834, recycleBinGb: 2.1, recycleBinItems: 37 }
     case 'tempClean': return { ok: true, message: 'Freed 0.49 GB (1,702 files). 132 files in use were left alone.' }
     case 'emptyRecycleBin': return { ok: true, message: 'Emptied the Recycle Bin and freed 2.10 GB.' }
     case 'bigFiles': await delay(900); return bigFiles
@@ -182,7 +215,7 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
     case 'mcpInfo': return { exePath: 'C:\\Users\\you\\AppData\\Local\\GuardianX\\current\\GuardianX.Mcp.exe', connected: false, configs: [] }
     case 'ask': {
       const q = String(params.question).toLowerCase()
-      const topic = /plug|charger|100/.test(q) ? 'plugged' : /app|drain|ram/.test(q) ? 'apps' : /80%|when|forecast/.test(q) ? 'forecast' : /drop/.test(q) ? 'drop' : (q.split(' ').length <= 3 && /why|how|more/.test(q) && assistantTopic) ? assistantTopic : 'health'
+      const topic = /plug|charger|100|lagaye|theek/.test(q) ? 'plugged' : /jaldi|khatam/.test(q) ? 'apps' : /plug|charger|100/.test(q) ? 'plugged' : /app|drain|ram/.test(q) ? 'apps' : /80%|when|forecast/.test(q) ? 'forecast' : /drop/.test(q) ? 'drop' : (q.split(' ').length <= 3 && /why|how|more/.test(q) && assistantTopic) ? assistantTopic : 'health'
       assistantTopic = topic
       const answers: Record<string, string> = {
         plugged: "Keeping it plugged in isn't dangerous, but it ages the battery faster. A lithium battery wears quickest when it sits at a high charge and is warm, and a gaming laptop on the charger is usually at 100% with the CPU and GPU heating it.\n\nYour laptop has been switched on and plugged in about 16.3 hours a day over the last week (Windows' records).\nYour biggest capacity drop was 7.4% between 5 Oct and 19 Oct.\n\nWhat helps most:\n1. Hold it between 40% and 80%. HP doesn't offer a charge limit on OMEN laptops, so the reliable way is a TP-Link Tapo or Shelly smart plug that Guardian X switches for you (Charging page). Without one, unplug when the 80% alert sounds.\n2. Keep it cool: hard surface, clear vents, and Balanced or Efficiency power mode when you aren't gaming.\n3. Charge to 100% only before you need the full runtime (Travel mode, or Charge to full now).\n\nWhy: When a laptop stays on the charger it usually holds the battery at or near 100%. High state of charge plus heat speeds up the side reactions that permanently reduce capacity.",
@@ -198,6 +231,13 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
         drop: ['Why shouldn\'t I keep it plugged in?', 'How hot does my battery get?'],
         health: ['What caused my biggest battery drop?', 'When will my battery reach 80% health?'],
       }
+      const actions: Record<string, { label: string; method?: string; params?: object; navigate?: string }[]> = {
+        plugged: [{ label: 'Open Charging', navigate: 'charging' }, { label: 'Switch to Desk mode', method: 'setMode', params: { id: 'desk' } }],
+        apps: [{ label: 'Open Apps & storage', navigate: 'apps' }, { label: 'Switch to Saver mode', method: 'setMode', params: { id: 'saver' } }],
+        forecast: [{ label: 'See the health trend', navigate: 'health' }, { label: 'Switch to Saver mode', method: 'setMode', params: { id: 'saver' } }],
+        drop: [{ label: 'See the health trend', navigate: 'health' }],
+        health: [{ label: 'See the health trend', navigate: 'health' }, { label: 'Open Charging', navigate: 'charging' }],
+      }
       const text = answers[topic]
       const id = params.id
       ;(async () => {
@@ -207,7 +247,7 @@ export async function mock(method: string, params: any, emit: (e: string, d: any
           chunk += parts[i]
           if (chunk.length >= 18 || i === parts.length - 1) { await delay(14); emit('chat', { id, delta: chunk }); chunk = '' }
         }
-        emit('chat', { id, done: true, sources: ['Your Guardian X data', 'How laptop batteries wear out: Why keeping it plugged in all the time is not ideal'], followUps: follow[topic], topic })
+        emit('chat', { id, done: true, sources: ['Your Guardian X data', 'How laptop batteries wear out: Why keeping it plugged in all the time is not ideal'], followUps: follow[topic], actions: actions[topic], topic })
       })()
       return { ok: true }
     }

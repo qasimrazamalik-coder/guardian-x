@@ -1,122 +1,120 @@
-import { motion } from 'framer-motion'
-import { Counter } from './ui'
+import { animate, motion, useReducedMotion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { useWidth } from './Charts'
 
-/** The health gauge: a 270° arc with a gradient stroke, glow, an 80% "worn out" tick and an animated sweep. */
-export function HealthRing({ health, size = 260 }: { health: number; size?: number }) {
-  const stroke = size * 0.07
-  const r = size / 2 - stroke
-  const c = size / 2
-  const sweep = 270
-  const start = 135
-  const arc = (from: number, to: number) => {
-    const a0 = ((start + from) * Math.PI) / 180
-    const a1 = ((start + to) * Math.PI) / 180
-    const large = to - from > 180 ? 1 : 0
-    return `M ${c + r * Math.cos(a0)} ${c + r * Math.sin(a0)} A ${r} ${r} 0 ${large} 1 ${c + r * Math.cos(a1)} ${c + r * Math.sin(a1)}`
+const rad = (deg: number) => (deg * Math.PI) / 180
+
+/**
+ * The health meter: a moving-coil style dial. 240° engraved scale (zoomed to 50–100% where batteries actually live),
+ * zone bands for replace / watch / good, the 14-day spread of readings as a cobalt band, and a needle.
+ */
+export function HealthDial({ health, low, high, maxSize = 248 }: { health: number; low?: number; high?: number; maxSize?: number }) {
+  const [ref, w] = useWidth<HTMLDivElement>()
+  const reduce = useReducedMotion()
+  const needleRef = useRef(158)
+  const S = Math.max(170, Math.min(maxSize, w || maxSize))
+  const c = S / 2, r = S / 2 - 16
+  const min = health < 52 ? Math.floor((health - 5) / 10) * 10 : 50, max = 100
+  const start = 158, sweep = 224
+  const ang = (v: number) => start + (sweep * (Math.min(max, Math.max(min, v)) - min)) / (max - min)
+  const pt = (a: number, rr: number) => [c + rr * Math.cos(rad(a)), c + rr * Math.sin(rad(a))] as const
+  const arc = (v0: number, v1: number, rr: number) => {
+    const a0 = ang(v0), a1 = ang(v1)
+    const [x0, y0] = pt(a0, rr), [x1, y1] = pt(a1, rr)
+    return `M ${x0} ${y0} A ${rr} ${rr} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`
   }
+  const ticks: number[] = []
+  for (let v = min; v <= max; v += 2) ticks.push(v)
   const h = Math.max(0, Math.min(100, health))
-  const color = h >= 90 ? ['#3dffb0', '#3de0ff'] : h >= 80 ? ['#ffd36b', '#ff9f43'] : ['#ff7a8f', '#ff4d6a']
-  const tick = ((start + sweep * 0.8) * Math.PI) / 180
-  const ticks = Array.from({ length: 28 }, (_, i) => i)
+  const tone = h >= 90 ? 'var(--good)' : h >= 80 ? 'var(--warn)' : 'var(--bad)'
+  const needleLen = r - 42 // ends inside the scale numbers (r - 28 ± 7) so it never crosses them
+  const target = ang(h)
+  const [needle, setNeedle] = useState(reduce ? target : start)
+  useEffect(() => {
+    if (reduce) { setNeedle(target); return }
+    const ctl = animate(needleRef.current, target, { type: 'spring', stiffness: 60, damping: 13, onUpdate: (v) => { needleRef.current = v; setNeedle(v) } })
+    return () => ctl.stop()
+  }, [target, reduce])
   return (
-    <div style={{ position: 'relative', width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <defs>
-          <linearGradient id="ring" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stopColor={color[0]} />
-            <stop offset="100%" stopColor={color[1]} />
-          </linearGradient>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation={stroke * 0.55} result="b" />
-            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-        </defs>
-        {ticks.map((i) => {
-          const a = ((start + (sweep * i) / (ticks.length - 1)) * Math.PI) / 180
-          const r0 = r - stroke * 1.25, r1 = r - stroke * (i % 3 === 0 ? 1.9 : 1.55)
-          return <line key={i} x1={c + r0 * Math.cos(a)} y1={c + r0 * Math.sin(a)} x2={c + r1 * Math.cos(a)} y2={c + r1 * Math.sin(a)} stroke="rgba(160,200,230,0.18)" strokeWidth={1.2} />
+    <div ref={ref} style={{ width: '100%', maxWidth: maxSize, minWidth: 170 }}>
+      <svg width={S} height={S * 0.93} viewBox={`0 0 ${S} ${S * 0.93}`} role="img" aria-label={`Battery health ${h.toFixed(1)} percent${low != null && high != null ? `, readings between ${low.toFixed(1)} and ${high.toFixed(1)} percent over 14 days` : ''}`} style={{ display: 'block', margin: '0 auto' }}>
+        {/* zones */}
+        <path d={arc(min, 80, r)} style={{ stroke: 'var(--bad)', strokeOpacity: 0.55 }} strokeWidth={4} fill="none" />
+        <path d={arc(80, 90, r)} style={{ stroke: 'var(--warn)', strokeOpacity: 0.6 }} strokeWidth={4} fill="none" />
+        <path d={arc(90, 100, r)} style={{ stroke: 'var(--good)', strokeOpacity: 0.6 }} strokeWidth={4} fill="none" />
+        {/* engraved graduations */}
+        {ticks.map((v) => {
+          const major = v % 10 === 0
+          const [x0, y0] = pt(ang(v), r - 6), [x1, y1] = pt(ang(v), r - (major ? 16 : 11))
+          return <line key={v} x1={x0} y1={y0} x2={x1} y2={y1} style={{ stroke: major ? 'var(--ink-2)' : 'var(--line-2)' }} strokeWidth={major ? 1.6 : 1} />
         })}
-        <path d={arc(0, sweep)} stroke="rgba(160,200,230,0.08)" strokeWidth={stroke} fill="none" strokeLinecap="round" />
-        <motion.path d={arc(0, sweep)} stroke="url(#ring)" strokeWidth={stroke} fill="none" strokeLinecap="round" filter="url(#glow)"
-          initial={{ pathLength: 0 }} animate={{ pathLength: h / 100 }} transition={{ duration: 1.6, ease: [0.2, 0.8, 0.2, 1] }} />
-        <line x1={c + (r - stroke * 0.55) * Math.cos(tick)} y1={c + (r - stroke * 0.55) * Math.sin(tick)} x2={c + (r + stroke * 0.85) * Math.cos(tick)} y2={c + (r + stroke * 0.85) * Math.sin(tick)}
-          stroke="rgba(234,242,248,0.7)" strokeWidth={2} />
-        <text x={c + (r + stroke * 1.9) * Math.cos(tick)} y={c + (r + stroke * 1.9) * Math.sin(tick)} fill="rgba(234,242,248,0.5)" fontSize={10} fontFamily="var(--mono)" textAnchor="middle">80</text>
+        {ticks.filter((v) => v % 10 === 0).map((v) => {
+          const [x, y] = pt(ang(v), r - 28)
+          return <text key={v} x={x} y={y + 4} textAnchor="middle" style={{ fontFamily: 'var(--mono)', fontSize: 11, fill: 'var(--ink-3)' }}>{v}</text>
+        })}
+        {/* spread of readings */}
+        {low != null && high != null && high > low && (
+          <path d={arc(low, high, r + 7)} style={{ stroke: 'var(--accent)' }} strokeWidth={5} strokeLinecap="round" fill="none" />
+        )}
+        {/* needle */}
+        <g transform={`rotate(${needle} ${c} ${c})`}>
+          <line x1={c - 10} y1={c} x2={c + needleLen} y2={c} style={{ stroke: tone }} strokeWidth={2.4} strokeLinecap="round" />
+          <line x1={c + r - 17} y1={c} x2={c + r - 4} y2={c} style={{ stroke: tone }} strokeWidth={3} strokeLinecap="round" />
+        </g>
+        <circle cx={c} cy={c} r={6} style={{ fill: 'var(--panel)', stroke: 'var(--ink)' }} strokeWidth={2} />
+        <text x={c} y={c + r * 0.66} textAnchor="middle" style={{ fontFamily: 'var(--mono)', fontSize: S * 0.13, fontWeight: 500, fill: 'var(--ink)', letterSpacing: '-0.03em' }}>
+          {h.toFixed(h >= 100 ? 0 : low != null ? 2 : 1)}<tspan style={{ fontSize: S * 0.065, fill: 'var(--ink-2)', fontFamily: 'var(--sans)' }} dx={3}>%</tspan>
+        </text>
+        <text x={c} y={c + r * 0.66 + S * 0.08} textAnchor="middle" style={{ fontSize: 12, fill: 'var(--ink-2)', fontFamily: 'var(--sans)' }}>health</text>
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-        <div>
-          <div style={{ fontSize: size * 0.19, fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1 }}>
-            <Counter value={h} decimals={1} /><span style={{ fontSize: size * 0.08, color: 'var(--muted)', marginLeft: 2 }}>%</span>
-          </div>
-          <div className="eyebrow" style={{ justifyContent: 'center', margin: '8px 0 0', fontSize: Math.max(9, size * 0.036), letterSpacing: '0.12em' }}>health</div>
-        </div>
+    </div>
+  )
+}
+
+/** A battery cell glyph with its fill level; status colour from the theme. */
+export function BatteryCell({ percent, charging, onAc, width = 76, height = 140 }: { percent: number; charging: boolean; onAc: boolean; width?: number; height?: number }) {
+  const reduce = useReducedMotion()
+  const pad = 6, capH = 10
+  const innerH = height - capH - pad * 2 - 2
+  const level = Math.max(0, Math.min(100, percent))
+  const top = capH + 2 + pad + innerH * (1 - level / 100)
+  const color = level <= 20 ? 'var(--bad)' : level >= 95 && onAc ? 'var(--warn)' : charging ? 'var(--accent)' : 'var(--good)'
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Charge ${Math.round(level)} percent${charging ? ', charging' : ''}`} style={{ flex: 'none', display: 'block' }}>
+      <rect x={width * 0.33} y={1} width={width * 0.34} height={capH} rx={2} style={{ fill: 'var(--ink-3)' }} />
+      <rect x={1} y={capH + 1} width={width - 2} height={height - capH - 2} rx={8} style={{ fill: 'var(--well)', stroke: 'var(--ink-3)' }} strokeWidth={1.5} />
+      {[25, 50, 75].map((p) => <line key={p} x1={pad + 2} x2={width - pad - 2} y1={capH + 2 + pad + innerH * (1 - p / 100)} y2={capH + 2 + pad + innerH * (1 - p / 100)} style={{ stroke: 'var(--line-2)' }} strokeDasharray="2 3" />)}
+      <motion.rect x={pad} width={width - pad * 2} rx={4} style={{ fill: color }}
+        initial={reduce ? false : { y: height - pad, height: 0 }} animate={{ y: top, height: Math.max(0, height - pad - top) }} transition={{ duration: 0.9, ease: [0.2, 0.8, 0.2, 1] }} />
+      {charging && <path d={`M ${width / 2 + 4} ${height * 0.38} l -10 14 h 8 l -4 13 l 11 -16 h -8 z`} style={{ fill: 'var(--panel)' }} />}
+    </svg>
+  )
+}
+
+/** A linear 0–100 scale with engraved ticks and a fill, for scores such as stress and heat load. */
+export function ScaleBar({ value, color, label }: { value: number; color: string; label: string }) {
+  const v = Math.max(0, Math.min(100, value))
+  return (
+    <div role="img" aria-label={label} style={{ position: 'relative', height: 26 }}>
+      <div style={{ position: 'absolute', top: 4, left: 0, right: 0, height: 8, borderRadius: 3, background: 'var(--well)', boxShadow: 'var(--well-shadow)', border: '1px solid var(--line)' }} />
+      <motion.div style={{ position: 'absolute', top: 4, left: 0, height: 8, borderRadius: 3, background: color }} initial={false} animate={{ width: `${v}%` }} transition={{ duration: 0.7 }} />
+      {[0, 25, 50, 75, 100].map((t) => (
+        <div key={t} style={{ position: 'absolute', top: 14, left: `${t}%`, width: 1, height: 5, background: 'var(--line-2)' }} />
+      ))}
+      <div className="num xs faint" style={{ position: 'absolute', top: 14, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', paddingTop: 1, pointerEvents: 'none', fontSize: 10 }}>
+        <span style={{ marginTop: 3 }}>0</span><span style={{ marginTop: 3 }}>100</span>
       </div>
     </div>
   )
 }
 
-/** A battery cell with a liquid fill that waves, and rising sparks while charging. */
-export function BatteryCell({ percent, charging, onAc, width = 120, height = 210 }: { percent: number; charging: boolean; onAc: boolean; width?: number; height?: number }) {
-  const pad = 8
-  const innerH = height - 34 - pad * 2
-  const level = Math.max(0, Math.min(100, percent))
-  const fillTop = 26 + pad + innerH * (1 - level / 100)
-  const color = level <= 20 ? '#ff4d6a' : level >= 95 && onAc ? '#ffb547' : '#3dffb0'
-  const wave = (phase: number) => {
-    const w = width - pad * 2
-    let d = `M ${pad} ${fillTop}`
-    for (let x = 0; x <= w; x += 6) d += ` L ${pad + x} ${fillTop + Math.sin((x / w) * Math.PI * 2 + phase) * 3.5}`
-    return d + ` L ${width - pad} ${height - pad} L ${pad} ${height - pad} Z`
-  }
+export function Logo({ size = 32 }: { size?: number }) {
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
-      <defs>
-        <linearGradient id="liquid" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity={0.95} />
-          <stop offset="100%" stopColor={color} stopOpacity={0.35} />
-        </linearGradient>
-        <clipPath id="cell"><rect x={pad} y={26 + pad} width={width - pad * 2} height={innerH} rx={14} /></clipPath>
-        <filter id="cellglow"><feGaussianBlur stdDeviation="10" /></filter>
-      </defs>
-      <rect x={width * 0.32} y={6} width={width * 0.36} height={14} rx={5} fill="rgba(160,200,230,0.25)" />
-      <rect x={1} y={20} width={width - 2} height={height - 21} rx={20} fill="rgba(10,16,24,0.6)" stroke="rgba(160,200,230,0.25)" strokeWidth={1.5} />
-      <g clipPath="url(#cell)">
-        <rect x={pad} y={fillTop} width={width - pad * 2} height={height} fill={color} opacity={0.25} filter="url(#cellglow)" />
-        <motion.path fill="url(#liquid)" animate={{ d: [wave(0), wave(Math.PI), wave(Math.PI * 2)] }} transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }} />
-        {charging && Array.from({ length: 6 }, (_, i) => (
-          <motion.circle key={i} r={2.2} fill="#eafff6" cx={pad + 12 + i * ((width - pad * 2 - 24) / 5)}
-            initial={{ cy: height - 10, opacity: 0 }} animate={{ cy: fillTop + 6, opacity: [0, 1, 0] }}
-            transition={{ duration: 1.8, repeat: Infinity, delay: i * 0.3, ease: 'easeOut' }} />
-        ))}
-      </g>
-      <text x={width / 2} y={height / 2 + 22} textAnchor="middle" fontSize={30} fontWeight={600} fill="#eaf2f8" style={{ fontFamily: 'var(--display)' }}>{Math.round(level)}%</text>
-    </svg>
-  )
-}
-
-/** A small semicircle gauge for 0-100 scores. */
-export function MiniGauge({ value, color, size = 120 }: { value: number; color: string; size?: number }) {
-  const r = size / 2 - 10
-  const c = size / 2
-  const len = Math.PI * r
-  return (
-    <svg width={size} height={size / 2 + 12}>
-      <path d={`M 10 ${c} A ${r} ${r} 0 0 1 ${size - 10} ${c}`} stroke="rgba(160,200,230,0.1)" strokeWidth={10} fill="none" strokeLinecap="round" />
-      <motion.path d={`M 10 ${c} A ${r} ${r} 0 0 1 ${size - 10} ${c}`} stroke={color} strokeWidth={10} fill="none" strokeLinecap="round"
-        style={{ filter: `drop-shadow(0 0 6px ${color})` }} strokeDasharray={len}
-        initial={{ strokeDashoffset: len }} animate={{ strokeDashoffset: len * (1 - Math.min(100, value) / 100) }} transition={{ duration: 1.2, ease: [0.2, 0.8, 0.2, 1] }} />
-    </svg>
-  )
-}
-
-export function Logo({ size = 34 }: { size?: number }) {
-  return (
-    <svg className="brand-mark" width={size} height={size} viewBox="0 0 64 64">
-      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#3dffb0" /><stop offset="1" stopColor="#3de0ff" /></linearGradient></defs>
-      <path d="M32 4 L56 11 V31 C56 45 45 55 32 60 C19 55 8 45 8 31 V11 Z" fill="#071017" stroke="url(#lg)" strokeWidth="3.5" strokeLinejoin="round" />
-      <rect x="24" y="19" width="16" height="25" rx="3.5" fill="none" stroke="#eaf2f8" strokeWidth="2.6" />
-      <rect x="28.5" y="15.5" width="7" height="3.5" rx="1" fill="#eaf2f8" />
-      <rect x="27.5" y="29" width="9" height="11.5" rx="1.5" fill="url(#lg)" />
+    <svg className="brand-mark" width={size} height={size} viewBox="0 0 64 64" aria-hidden>
+      <rect x="4" y="4" width="56" height="56" rx="12" style={{ fill: 'var(--accent)' }} />
+      <rect x="22" y="15" width="20" height="36" rx="4" fill="none" style={{ stroke: 'var(--accent-ink)' }} strokeWidth="3.4" />
+      <rect x="27" y="10.5" width="10" height="4.5" rx="1.5" style={{ fill: 'var(--accent-ink)' }} />
+      <rect x="26.5" y="32" width="11" height="14.5" rx="1.5" style={{ fill: 'var(--accent-ink)' }} />
     </svg>
   )
 }

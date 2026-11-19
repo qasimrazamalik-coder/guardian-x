@@ -5,7 +5,23 @@ export interface Battery {
   remainingWh: number; fullWh: number; designWh: number; cycles: number
   health: number; wear: number; wearPer100: number | null; wearPerMonth: number | null; hoursLeft: number | null
   model: string; chemistry: string; manufacturer: string
+  /** v2.2: rateW is smoothed; rateRawW is the instantaneous driver reading. */
+  rateRawW?: number | null
+  rateMethod?: 'energy' | 'driver' | 'none'
+  healthPrecise?: number; healthLow?: number; healthHigh?: number
+  lastCalibrated?: string | null
 }
+export interface Heat {
+  tempC: number | null; source: 'thermal-zone' | 'battery' | 'estimate'; level: 'cool' | 'warm' | 'hot'; score: number
+  cpuPercent: number; gpuBusy: boolean; chargingW: number | null; basis: string
+}
+export interface Habit { score: number; grade: 'A' | 'B' | 'C' | 'D' | 'E'; change: number | null; factors: { name: string; impact: number; detail: string }[] }
+export interface Pattern {
+  usualUnplug: string | null; usualPlugIn: string | null; lastsUntilPlugIn: boolean | null
+  readyBy: { time: string; percent: number } | null; message: string | null
+}
+export interface Vendor { brand: string; nativeLimit: 'asus' | 'lenovo' | null; limitActive: boolean | null; note: string }
+export interface ChatAction { label: string; method?: string; params?: Record<string, unknown>; navigate?: string }
 export interface Stress { score: number; level: string; hoursFull: number; hoursHot: number; hoursLow: number; tempKnown: boolean }
 export interface Sleep { start: string; end: string; lost: number; perHour: number; unusual: boolean }
 export interface Tip { level: TipLevel; title: string; body: string }
@@ -28,6 +44,11 @@ export interface Dashboard {
   auto: { last: string | null; gaming: boolean; quiet: boolean }
   error: string | null
   version: string
+  heat?: Heat
+  habit?: Habit
+  pattern?: Pattern
+  vendor?: Vendor
+  gaming?: boolean
 }
 
 export interface Forecast {
@@ -67,6 +88,7 @@ export interface Settings {
   quietHoursOn: boolean; quietFrom: number; quietTo: number
   autoModeOnPower: boolean; acMode: string; batteryMode: string; autoGamingMode: boolean; autoEfficiencyOnBattery: boolean
   efficiencyApps: string[]; weeklyReportOn: boolean; widgetOn: boolean; packs: string[]
+  smartLowAlert?: boolean; toastsOn?: boolean; theme?: 'system' | 'light' | 'dark'
 }
 
 export interface PlugConfig { kind: string; host: string; username: string; hasPassword: boolean }
