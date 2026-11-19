@@ -47,7 +47,7 @@ internal static class UninstallHooks
         try { Microsoft.Win32.Registry.CurrentUser.OpenSubKey(StartupRegistration.RunKey, true)?.DeleteValue(StartupRegistration.ValueName, false); }
         catch { }
         // Removes the toast registration (start menu entry, registry keys, icon cache) Windows keeps for the app.
-        try { Microsoft.Toolkit.Uwp.Notifications.ToastNotificationManagerCompat.Uninstall(); }
+        try { CommunityToolkit.WinUI.Notifications.ToastNotificationManagerCompat.Uninstall(); }
         catch { }
 
         if (!Directory.Exists(Store.DefaultFolder)) return;

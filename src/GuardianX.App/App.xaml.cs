@@ -2,7 +2,7 @@ using System.Windows;
 using GuardianX.Core;
 using GuardianX.Core.Data;
 using GuardianX.Core.Gpu;
-using Toasts = Microsoft.Toolkit.Uwp.Notifications;
+using Toasts = CommunityToolkit.WinUI.Notifications;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
