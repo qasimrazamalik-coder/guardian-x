@@ -66,9 +66,9 @@ public sealed class HeatSensor : IDisposable
         double? chg = chargingW is double w && w > 0 ? Math.Round(w, 1) : null;
         if (zoneC is double z)
         {
-            double score = SmartInsights.HeatScoreFromTemp(z);
-            return new HeatReading(z, "thermal-zone", Level(z), (int)Math.Round(score), cpu, gpuBusy, chg,
-                $"Measured {z:0.0} °C from Windows' thermal sensor (the hottest zone).");
+            double score = SmartInsights.HeatScoreFromTemp(ZoneAsBatteryC(z));
+            return new HeatReading(z, "thermal-zone", ZoneLevel(z), (int)Math.Round(score), cpu, gpuBusy, chg,
+                $"Measured {z:0.0} °C by Windows' system thermal sensor (inside the laptop, not the battery itself; normal is under 60 °C).");
         }
         if (batteryC is double b)
         {
@@ -82,7 +82,13 @@ public sealed class HeatSensor : IDisposable
             (chg is not null ? " and charging power" : "") + ".");
     }
 
-    /// <summary>cool under 40 °C, warm under 48 °C, hot from 48 °C.</summary>
+    /// <summary>The system thermal zone sits near the CPU and runs far hotter than the battery: cool under 60 °C, warm under 75 °C, hot from 75 °C.</summary>
+    public static string ZoneLevel(double zoneC) => zoneC < 60 ? "cool" : zoneC < 75 ? "warm" : "hot";
+
+    /// <summary>Maps the zone's 60–75 °C band onto the battery's 40–48 °C band so scores and "hot hours" mean the same thing for both sensors.</summary>
+    public static double ZoneAsBatteryC(double zoneC) => 40 + (zoneC - 60) * 8.0 / 15.0;
+
+    /// <summary>Battery temperature: cool under 40 °C, warm under 48 °C, hot from 48 °C.</summary>
     public static string Level(double tempC) => tempC < 40 ? "cool" : tempC < 48 ? "warm" : "hot";
 
     public void Dispose()

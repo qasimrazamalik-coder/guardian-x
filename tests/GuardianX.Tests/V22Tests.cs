@@ -248,16 +248,21 @@ public class HeatTests
     [Fact]
     public void RealTemperatureWinsThenBatteryThenEstimate()
     {
-        var zone = HeatSensor.Assess(50, 30, 10, false, null);
+        var zone = HeatSensor.Assess(54, 30, 10, false, null); // a normal idle system zone (measured 53.9 °C on the Omen)
         Assert.Equal("thermal-zone", zone.Source);
-        Assert.Equal("hot", zone.Level);
-        Assert.Equal(50.0, zone.TempC);
+        Assert.Equal("cool", zone.Level);
+        Assert.True(zone.Score < 35);
+        Assert.Equal(54.0, zone.TempC);
+        Assert.Equal("warm", HeatSensor.Assess(68, null, 10, false, null).Level);
+        var hotZone = HeatSensor.Assess(85, null, 90, true, null);
+        Assert.Equal("hot", hotZone.Level);
+        Assert.True(hotZone.Score >= SmartInsights.HotScore);
 
         var battery = HeatSensor.Assess(null, 38, 10, false, null);
         Assert.Equal("battery", battery.Source);
         Assert.Equal("cool", battery.Level);
 
-        var warm = HeatSensor.Assess(44, null, 10, false, null);
+        var warm = HeatSensor.Assess(null, 44, 10, false, null);
         Assert.Equal("warm", warm.Level);
 
         var idle = HeatSensor.Assess(null, null, 5, false, null);
@@ -364,7 +369,7 @@ public class RomanUrduAndActionsTests
         var ctx = new AssistantContext
         {
             Battery = baseCtx.Battery, Wear = baseCtx.Wear, Forecast = baseCtx.Forecast, Daily = baseCtx.Daily, Settings = new Settings(),
-            Heat = HeatSensor.Assess(51.5, null, 40, true, null),
+            Heat = HeatSensor.Assess(78.5, null, 40, true, null),
             Habit = new HabitReport(62, "C", -5, new[]
             {
                 new HabitFactor("Full on the charger", 30, "About 10 h a day at 95% or more on the charger."),
@@ -381,9 +386,9 @@ public class RomanUrduAndActionsTests
         Assert.Contains("down 5", habit.Text);
         Assert.Equal("charging", habit.Actions.Single().Navigate);
         var heat = a.Ask("How hot does my battery get?", ctx);
-        Assert.Contains("51.5 °C", heat.Text);
+        Assert.Contains("78.5 °C", heat.Text);
         Assert.Contains("thermal sensor", heat.Text);
-        Assert.Contains(heat.Actions, x => x.Method == "setMode");
+        Assert.True(heat.Actions.Any(x => x.Method == "setMode"), $"topic={heat.Topic} level={ctx.Heat?.Level} mode={ctx.Mode.Id}");
     }
 }
 
