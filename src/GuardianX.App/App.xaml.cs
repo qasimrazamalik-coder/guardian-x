@@ -2,6 +2,7 @@ using System.Windows;
 using GuardianX.Core;
 using GuardianX.Core.Data;
 using GuardianX.Core.Gpu;
+using Toasts = Microsoft.Toolkit.Uwp.Notifications;
 using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 
@@ -39,6 +40,8 @@ public partial class App : Application
 
         var settings = Settings.Load();
         Monitor = new GuardianMonitor(new Store(), settings, new DgpuWatcher());
+        try { Toasts.ToastNotificationManagerCompat.OnActivated += OnToastActivated; }
+        catch (Exception ex) { Log("Toasts: " + ex.Message); }
         Monitor.Alerted += a => Dispatcher.BeginInvoke(() => Notify(a));
         Monitor.WeeklyReportReady += path => _pendingReport = path;
         if (settings.StartWithWindows && !StartupRegistration.IsRegistered())
@@ -97,8 +100,61 @@ public partial class App : Application
     private void Notify(Alert a)
     {
         if (DateTimeOffset.Now < _mutedUntil) return;
+        if (Monitor.Settings.ToastsOn)
+        {
+            try
+            {
+                // Silent: Guardian X plays its own alert sounds.
+                new Toasts.ToastContentBuilder()
+                    .AddArgument("action", "open")
+                    .AddText(a.Title)
+                    .AddText(a.Body)
+                    .AddButton(new Toasts.ToastButton().SetContent("Snooze 1 h").AddArgument("action", "snooze").SetBackgroundActivation())
+                    .AddButton(new Toasts.ToastButton().SetContent("Switch to Saver").AddArgument("action", "saver").SetBackgroundActivation())
+                    .AddButton(new Toasts.ToastButton().SetContent("Open").AddArgument("action", "open"))
+                    .AddAudio(new Uri("ms-winsoundevent:Notification.Default"), null, true)
+                    .Show();
+                return;
+            }
+            catch (Exception ex) { Log("Toast failed, using a balloon: " + ex.Message); }
+        }
         _tray.ShowBalloonTip(8000, a.Title, a.Body, Forms.ToolTipIcon.None);
     }
+
+    /// <summary>A toast or one of its buttons was clicked. Arrives on a background thread.</summary>
+    private void OnToastActivated(Toasts.ToastNotificationActivatedEventArgsCompat e)
+    {
+        string action;
+        try { action = Toasts.ToastArguments.Parse(e.Argument).TryGetValue("action", out string value) ? value : "open"; }
+        catch { action = "open"; }
+        Dispatcher.BeginInvoke(() =>
+        {
+            try
+            {
+                switch (action)
+                {
+                    case "snooze":
+                        _mutedUntil = DateTimeOffset.Now.AddHours(1);
+                        break;
+                    case "saver":
+                        Monitor.ApplyMode("saver");
+                        break;
+                    default:
+                        if (_pendingReport is string report && File.Exists(report))
+                        {
+                            _pendingReport = null;
+                            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(report) { UseShellExecute = true }); break; } catch { }
+                        }
+                        ShowWindow();
+                        break;
+                }
+            }
+            catch (Exception ex) { Log("Toast action: " + ex.Message); }
+        });
+    }
+
+    /// <summary>Settings > Theme changed: the widget follows it (the web interface gets the push event).</summary>
+    public void ApplyTheme() => _widget?.ApplyTheme();
 
     private void OnPowerMode(object? sender, PowerModeChangedEventArgs e)
     {

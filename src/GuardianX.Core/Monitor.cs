@@ -49,6 +49,13 @@ public sealed class Settings
     public double? WidgetLeft { get; set; }
     public double? WidgetTop { get; set; }
 
+    /// <summary>"system", "light" or "dark". Read by the web interface and the mini widget.</summary>
+    public string Theme { get; set; } = "system";
+    /// <summary>Warn when, on battery, the charge won't last until the usual plug-in time.</summary>
+    public bool SmartLowAlert { get; set; } = true;
+    /// <summary>Windows toast notifications with buttons; off means the classic tray balloons.</summary>
+    public bool ToastsOn { get; set; } = true;
+
     public bool IsQuiet(DateTime now) =>
         QuietHoursOn && QuietFrom != QuietTo &&
         (QuietFrom < QuietTo ? now.Hour >= QuietFrom && now.Hour < QuietTo : now.Hour >= QuietFrom || now.Hour < QuietTo);
@@ -116,7 +123,8 @@ public sealed class GuardianMonitor : IDisposable
     public event Action<string>? WeeklyReportReady;
 
     private readonly Timer _timer;
-    private int _ticking;
+    private readonly Timer _fast;
+    private int _ticking, _fastBusy;
     private bool _fullHoldWarned, _lowWarned, _highWarned, _plugMismatchWarned;
     private readonly HashSet<string> _gpuWarned = new(StringComparer.OrdinalIgnoreCase);
     private bool? _lastOnAc;
@@ -128,12 +136,72 @@ public sealed class GuardianMonitor : IDisposable
     private ISmartPlug? _plug;
     private string _plugKey = "";
 
+    /// <summary>Fast 5-second readings for an accurate, smoothed power figure.</summary>
+    public PowerSampler Power { get; } = new();
+    public HeatSensor HeatSensor { get; } = new();
+    public HeatReading? Heat { get; private set; }
+    public HealthPrecision? HealthPrecise { get; private set; }
+    public DateTimeOffset? LastCalibrated { get; private set; }
+    public HabitReport? Habit { get; private set; }
+    /// <summary>Full-screen game, or the foreground app is busy on the NVIDIA GPU.</summary>
+    public bool GamingNow { get; private set; }
+    private IReadOnlyList<GpuHolder> _holdersNow = Array.Empty<GpuHolder>();
+    private IReadOnlyList<PowerEvent> _events21 = Array.Empty<PowerEvent>();
+    private DateTime _lastInsights = DateTime.MinValue;
+    private bool _smartLowWarned;
+
     public GuardianMonitor(Store store, Settings settings, DgpuWatcher gpu)
     {
         Store = store;
         Settings = settings;
         Gpu = gpu;
         _timer = new Timer(_ => Tick(), null, Timeout.Infinite, Timeout.Infinite);
+        _fast = new Timer(_ => FastSample(), null, Timeout.Infinite, Timeout.Infinite);
+    }
+
+    /// <summary>A lightweight reading every 5 seconds, kept only in memory for power smoothing.</summary>
+    private void FastSample()
+    {
+        if (Interlocked.Exchange(ref _fastBusy, 1) == 1) return;
+        try
+        {
+            if (BatteryReader.Read() is { } s) Power.Add(new PowerPoint(s.Time, s.RemainingMWh, s.RateMw, s.OnAc));
+        }
+        catch { }
+        finally { Interlocked.Exchange(ref _fastBusy, 0); }
+    }
+
+    /// <summary>The smoothed power right now: 'energy' (slope of remaining Wh), 'driver' (smoothed driver rate) or 'none'.</summary>
+    public SmoothedRate Rate => Power.Current(DateTimeOffset.Now);
+
+    /// <summary>The reading with its rate replaced by the smoothed one, for hours left and time to full.</summary>
+    public BatterySnapshot? WithSmoothedRate(BatterySnapshot? s)
+    {
+        if (s is null) return null;
+        if (Rate.RateMw is not double mw) return s;
+        int rate = Math.Abs(mw) < 300 ? 0 : (int)Math.Round(mw); // under 0.3 W is noise (idle on the charger)
+        return s with { RateMw = rate };
+    }
+
+    /// <summary>The plug-in routine and what it means for the current charge.</summary>
+    public UsagePattern PatternNow(BatterySnapshot? s)
+    {
+        var sm = WithSmoothedRate(s);
+        int limit = Settings.ChargeLimitOn ? Modes.Get(Settings.Mode).ChargeLimit : 100;
+        return SmartInsights.Pattern(_events21, sm, sm?.RateMw, limit, DateTimeOffset.Now);
+    }
+
+    /// <summary>Precise health, habit score and the event history behind the routine; refreshed every few minutes.</summary>
+    private void RefreshInsights(BatterySnapshot s)
+    {
+        if (DateTime.Now - _lastInsights < TimeSpan.FromMinutes(5)) return;
+        _lastInsights = DateTime.Now;
+        var now = DateTimeOffset.Now;
+        var samples = Store.Samples(now.AddDays(-14), now.AddMinutes(1));
+        HealthPrecise = SmartInsights.PreciseHealth(samples, s.FullMWh, s.DesignMWh, now);
+        Habit = SmartInsights.Habit(samples, now);
+        LastCalibrated = Store.LastCalibrated();
+        _events21 = Store.Events(now.AddDays(-21));
     }
 
     public void Start()
@@ -143,6 +211,7 @@ public sealed class GuardianMonitor : IDisposable
         Store.Prune();
         Task.Run(() => { try { Sounds.Generate(); } catch { } });
         _timer.Change(TimeSpan.Zero, TimeSpan.FromMinutes(1));
+        _fast.Change(PowerSampler.Interval, PowerSampler.Interval);
     }
 
     public void ImportReportIfDue()
@@ -163,7 +232,16 @@ public sealed class GuardianMonitor : IDisposable
             var s = BatteryReader.Read();
             if (s is null) { LastError = "No battery found."; return; }
             LastError = null;
-            Store.Add(s);
+            Power.Add(new PowerPoint(s.Time, s.RemainingMWh, s.RateMw, s.OnAc));
+            try
+            {
+                _holdersNow = Gpu.Available ? Gpu.Holders() : Array.Empty<GpuHolder>();
+                GamingNow = GameDetector.FullScreenGame() || GameDetector.ForegroundOnGpu(_holdersNow);
+                var sm = WithSmoothedRate(s)!;
+                Heat = HeatSensor.Read(s.TemperatureC, _holdersNow.Count > 0, sm.RateMw is int cr && cr > 0 ? cr / 1000.0 : (double?)null);
+            }
+            catch { }
+            Store.Add(s, Heat?.Score);
             Latest = s;
 
             if (_lastOnAc is bool was && was != s.OnAc)
@@ -173,13 +251,16 @@ public sealed class GuardianMonitor : IDisposable
                 else { _fullHoldWarned = false; _highWarned = false; ChargeToFull = false; }
                 if (Settings.PlugSounds && Settings.SoundsOn && !Settings.IsQuiet(DateTime.Now)) Sounds.Play(s.OnAc ? Cue.PluggedIn : Cue.Unplugged, Settings.SoundPack);
                 OnPowerSourceChanged(s.OnAc);
+                _lastInsights = DateTime.MinValue; // pick up the new charger event for the routine
             }
             _lastOnAc = s.OnAc;
             RunAutoActions(s);
 
             ImportReportIfDue();
+            try { RefreshInsights(s); } catch { }
             RunChargeLimiter(s);
             CheckThresholds(s);
+            CheckSmartLow(s);
             CheckFullHold(s);
             TrackApps(s);
             CheckWeeklyReport(s);
@@ -220,7 +301,7 @@ public sealed class GuardianMonitor : IDisposable
     {
         if (Settings.AutoGamingMode)
         {
-            bool game = GameDetector.FullScreenGame();
+            bool game = GamingNow;
             if (game && !GamingDetected)
             {
                 GamingDetected = true;
@@ -254,7 +335,8 @@ public sealed class GuardianMonitor : IDisposable
         var monday = now.Date.AddDays(-(((int)now.DayOfWeek + 6) % 7));
         if (now.Hour < 9 || Settings.LastWeeklyReport == monday.ToString("yyyy-MM-dd")) return;
         if (Store.SampleCount() < 60) return; // not enough to report on yet
-        var ctx = Assistant.AssistantContext.Build(Store, s, Apps.LastSample, Plug, Settings);
+        var ctx = Assistant.AssistantContext.Build(Store, WithSmoothedRate(s), Apps.LastSample, Plug, Settings,
+            heat: Heat, habit: Habit, pattern: PatternNow(s));
         var path = Reports.WeeklyReport.Write(Store, ctx, now);
         Settings.LastWeeklyReport = monday.ToString("yyyy-MM-dd");
         Settings.Save();
@@ -362,11 +444,30 @@ public sealed class GuardianMonitor : IDisposable
         if (Settings.NotifyLow && !_lowWarned && !s.OnAc && s.Percent <= Settings.LowPercent)
         {
             _lowWarned = true;
-            var hours = BatteryInsights.HoursLeft(s.RemainingMWh, s.FullMWh, s.RateMw);
+            var sm = WithSmoothedRate(s)!;
+            var hours = BatteryInsights.HoursLeft(sm.RemainingMWh, sm.FullMWh, sm.RateMw);
             Raise(new Alert($"Battery at {s.Percent:0}%",
                 (hours is double h ? $"About {Math.Max(1, (int)(h * 60))} minutes left. " : "") +
                 "Plug in soon. Running it close to empty also wears the battery.", Cue.Low));
         }
+    }
+
+    /// <summary>One alert per discharge when the charge, at the smoothed rate, runs out 30+ minutes before the usual plug-in.</summary>
+    private void CheckSmartLow(BatterySnapshot s)
+    {
+        if (s.OnAc) { _smartLowWarned = false; return; }
+        if (!Settings.SmartLowAlert || _smartLowWarned) return;
+        var rate = Rate;
+        if (rate.Method != "energy" || rate.RateMw is not double mw || mw >= 0) return; // only on a settled measurement
+        if (SmartInsights.Routine(_events21).PlugIn is not TimeSpan plugIn) return;
+        var now = DateTimeOffset.Now;
+        double hours = s.RemainingMWh / -mw;
+        var at = SmartInsights.Next(plugIn, now);
+        if (!SmartInsights.ShouldWarnSmartLow(false, hours, now, at)) return;
+        _smartLowWarned = true;
+        Raise(new Alert("This charge won't last until you usually plug in",
+            $"At {-mw / 1000:0.0} W it runs out around {now.AddHours(hours).ToLocalTime():HH:mm}, and you usually plug in at {plugIn.Hours:00}:{plugIn.Minutes:00}. " +
+            "Switch to Saver mode or plug in sooner.", Cue.Low));
     }
 
     private void CheckFullHold(BatterySnapshot s)
@@ -396,7 +497,7 @@ public sealed class GuardianMonitor : IDisposable
     private void CheckGpu(BatterySnapshot s)
     {
         if (s.OnAc || !Gpu.Available) { GpuHolders = Array.Empty<GpuHolder>(); return; }
-        GpuHolders = Gpu.Holders();
+        GpuHolders = _holdersNow;
         bool alerts = Settings.NotifyGpu && Modes.Get(Settings.Mode).GpuAlerts;
         foreach (var h in GpuHolders)
         {
@@ -431,5 +532,10 @@ public sealed class GuardianMonitor : IDisposable
                 $"{sleeps[^1].PercentPerHour:0.#}% an hour, more than usual. Open Guardian X to see why."));
     }
 
-    public void Dispose() => _timer.Dispose();
+    public void Dispose()
+    {
+        _timer.Dispose();
+        _fast.Dispose();
+        HeatSensor.Dispose();
+    }
 }

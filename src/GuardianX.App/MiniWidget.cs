@@ -15,13 +15,18 @@ namespace GuardianX.App;
 /// <summary>A small always-on-top live battery readout. Drag to move, double-click to open Guardian X.</summary>
 public sealed class MiniWidget : Window
 {
-    private static readonly Brush Ink = Frozen(0xE8, 0xED, 0xF2), Muted = Frozen(0x8A, 0x97, 0xA6),
+    private static readonly Brush DarkInk = Frozen(0xE8, 0xED, 0xF2), DarkMuted = Frozen(0x8A, 0x97, 0xA6),
+        LightInk = Frozen(0x12, 0x18, 0x20), LightMuted = Frozen(0x5A, 0x66, 0x73),
         Mint = Frozen(0x3D, 0xFF, 0xB0), Cyan = Frozen(0x3D, 0xE0, 0xFF), Amber = Frozen(0xFF, 0xB5, 0x47), Red = Frozen(0xFF, 0x5D, 0x6C);
+    private Brush Ink = DarkInk, Muted = DarkMuted;
+    private bool? _light;
+    private readonly Border _card;
+    private readonly TextBlock _mark;
 
     private readonly GuardianMonitor _monitor;
-    private readonly TextBlock _percent = new() { FontSize = 30, FontWeight = FontWeights.SemiBold, Foreground = Ink };
-    private readonly TextBlock _state = new() { FontSize = 12, Foreground = Muted };
-    private readonly TextBlock _detail = new() { FontSize = 11.5, Foreground = Muted, FontFamily = new FontFamily("Cascadia Mono, Consolas") };
+    private readonly TextBlock _percent = new() { FontSize = 30, FontWeight = FontWeights.SemiBold, Foreground = DarkInk };
+    private readonly TextBlock _state = new() { FontSize = 12, Foreground = DarkMuted };
+    private readonly TextBlock _detail = new() { FontSize = 11.5, Foreground = DarkMuted, FontFamily = new FontFamily("Cascadia Mono, Consolas") };
     private readonly Rectangle _fill = new() { RadiusX = 3, RadiusY = 3, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly Border _track;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(5) };
@@ -36,12 +41,12 @@ public sealed class MiniWidget : Window
 
         _track = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), Child = _fill, Margin = new Thickness(0, 8, 0, 6) };
         var top = new DockPanel();
-        var mark = new TextBlock { Text = "GUARDIAN X", FontSize = 9.5, Foreground = Muted, FontFamily = new FontFamily("Cascadia Mono, Consolas"), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 4, 0, 0) };
+        var mark = _mark = new TextBlock { Text = "GUARDIAN X", FontSize = 9.5, Foreground = DarkMuted, FontFamily = new FontFamily("Cascadia Mono, Consolas"), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 4, 0, 0) };
         DockPanel.SetDock(mark, Dock.Right);
         top.Children.Add(mark);
         top.Children.Add(new StackPanel { Children = { _percent, _state } });
 
-        Content = new Border
+        Content = _card = new Border
         {
             CornerRadius = new CornerRadius(16),
             Background = new LinearGradientBrush(Color.FromArgb(242, 10, 15, 22), Color.FromArgb(242, 6, 10, 15), 90),
@@ -66,7 +71,7 @@ public sealed class MiniWidget : Window
         ContextMenu = menu;
 
         _timer.Tick += (_, _) => Refresh();
-        Loaded += (_, _) => { Place(); Refresh(); _timer.Start(); };
+        Loaded += (_, _) => { Place(); ApplyTheme(); Refresh(); _timer.Start(); };
         Closed += (_, _) => { _timer.Stop(); try { _monitor.Settings.Save(); } catch { } };
     }
 
@@ -81,9 +86,43 @@ public sealed class MiniWidget : Window
         Top = valid ? t : area.Bottom - ActualHeight - 12;
     }
 
+    /// <summary>Light when Settings > Theme is light, or "system" and Windows apps use the light theme.</summary>
+    public static bool IsLight(string theme)
+    {
+        if (theme == "light") return true;
+        if (theme == "dark") return false;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("AppsUseLightTheme") is int v && v == 1;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Recolours the widget for the current theme (cheap; called on every refresh to follow Windows too).</summary>
+    public void ApplyTheme()
+    {
+        bool light = IsLight(_monitor.Settings.Theme);
+        if (_light == light) return;
+        _light = light;
+        Ink = light ? LightInk : DarkInk;
+        Muted = light ? LightMuted : DarkMuted;
+        _percent.Foreground = Ink;
+        _state.Foreground = _detail.Foreground = _mark.Foreground = Muted;
+        _card.Background = light
+            ? new LinearGradientBrush(Color.FromArgb(245, 0xF7, 0xF9, 0xFB), Color.FromArgb(245, 0xEC, 0xF0, 0xF4), 90)
+            : new LinearGradientBrush(Color.FromArgb(242, 10, 15, 22), Color.FromArgb(242, 6, 10, 15), 90);
+        _card.BorderBrush = light ? new SolidColorBrush(Color.FromArgb(90, 0x1F, 0xA8, 0x74)) : new SolidColorBrush(Color.FromArgb(70, 61, 255, 176));
+        _track.Background = light ? new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)) : new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
+        if (_card.Effect is DropShadowEffect shadow) shadow.Opacity = light ? 0.25 : 0.55;
+    }
+
     private void Refresh()
     {
-        var s = BatteryReader.Read() ?? _monitor.Latest;
+        ApplyTheme();
+        var raw = BatteryReader.Read() ?? _monitor.Latest;
+        // Smoothed rate, the same figure the main window uses for hours left and time to full.
+        var s = _monitor.WithSmoothedRate(raw);
         if (s is null) { _percent.Text = "—"; _state.Text = "No battery"; return; }
         _percent.Text = $"{s.Percent:0}%";
         var mode = Modes.Get(_monitor.Settings.Mode);

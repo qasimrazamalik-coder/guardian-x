@@ -70,6 +70,7 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         "chargeToFull" => Run(() => { monitor.ChargeToFull = true; Task.Run(monitor.Tick); return Ok(); }),
         "settingsGet" => Run(() => SettingsView()),
         "settingsSave" => Run(() => { SaveSettings(p!); return Ok(); }),
+        "setVendorLimit" => Run(() => { var (ok, message) = VendorLimit.Set(p!["on"]!.GetValue<bool>()); return new { ok, message }; }),
         "playSound" => Run(() => { Sounds.Play(Enum.Parse<Cue>(p!["cue"]!.GetValue<string>(), true), monitor.Settings.SoundPack); return Ok(); }),
         "assistantStatus" => Run(() => new { ready = true, engine = "local", sections = _assistant.Chunks.Count }),
         "assistantReset" => Run(() => { _assistant.Reset(); return Ok(); }),
@@ -106,17 +107,25 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
     {
         var store = monitor.Store;
         var now = DateTimeOffset.Now;
-        var s = monitor.Latest ?? BatteryReader.Read();
+        var raw = monitor.Latest ?? BatteryReader.Read();
+        // Every time on the dashboard comes from the smoothed rate, so the cards, the widget and the assistant agree.
+        var s = monitor.WithSmoothedRate(raw);
+        var rate = monitor.Rate;
         var settings = monitor.Settings;
         object? battery = null;
         WearReport? wear = null;
         if (s is not null)
         {
             wear = BatteryInsights.Wear(s.FullMWh, s.DesignMWh, s.Cycles, store.DailyCapacity(400));
+            var precise = monitor.HealthPrecise ?? new HealthPrecision(Math.Round(s.HealthPercent, 2), Math.Round(s.HealthPercent, 2), Math.Round(s.HealthPercent, 2));
             battery = new
             {
                 percent = s.Percent, onAc = s.OnAc, charging = s.Charging,
                 rateW = s.RateMw is int r ? Math.Round(r / 1000.0, 1) : (double?)null,
+                rateRawW = raw?.RateMw is int rr ? Math.Round(rr / 1000.0, 1) : (double?)null,
+                rateMethod = rate.Method,
+                healthPrecise = precise.HealthPrecise, healthLow = precise.HealthLow, healthHigh = precise.HealthHigh,
+                lastCalibrated = monitor.LastCalibrated,
                 voltage = s.VoltageMv is int v ? v / 1000.0 : (double?)null,
                 tempC = s.TemperatureC,
                 remainingWh = s.RemainingMWh / 1000.0, fullWh = s.FullMWh / 1000.0, designWh = s.DesignMWh / 1000.0, cycles = s.Cycles,
@@ -135,9 +144,30 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
         var chargerHours = BatteryInsights.ChargerHoursPerDay(store.ReportPeriods());
         var tips = wear is null ? new List<Tip>() : BatteryInsights.Coach(wear, today, hold, last, store.GpuHolders(now.AddDays(-7)), chargerHours);
         var plug = monitor.Plug;
+        var heat = monitor.Heat;
+        var habit = monitor.Habit;
+        var pattern = monitor.PatternNow(raw);
         return new
         {
             battery,
+            heat = heat is null ? null : new
+            {
+                tempC = heat.TempC, source = heat.Source, level = heat.Level, score = heat.Score,
+                cpuPercent = heat.CpuPercent, gpuBusy = heat.GpuBusy, chargingW = heat.ChargingW, basis = heat.Basis,
+            },
+            habit = habit is null ? null : new
+            {
+                score = habit.Score, grade = habit.Grade, change = habit.Change,
+                factors = habit.Factors.Select(f => new { name = f.Name, impact = f.Impact, detail = f.Detail }),
+            },
+            pattern = new
+            {
+                usualUnplug = pattern.UsualUnplug, usualPlugIn = pattern.UsualPlugIn, lastsUntilPlugIn = pattern.LastsUntilPlugIn,
+                readyBy = pattern.ReadyBy is { } rb ? new { time = rb.Time, percent = rb.Percent } : null,
+                message = pattern.Message,
+            },
+            vendor = VendorLimit.Current(),
+            gaming = monitor.GamingNow,
             stress = new { score = today.Score, level = today.Level, hoursFull = today.HoursAtFull, hoursHot = today.HoursHot, hoursLow = today.HoursLow, tempKnown = today.TemperatureKnown },
             holdMinutes = hold,
             chargerHours,
@@ -284,13 +314,14 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
             s.StartWithWindows, s.NotifyFullHold, s.FullHoldMinutes, s.NotifyLow, s.LowPercent, s.NotifyHigh, s.HighPercent,
             s.NotifySleepDrain, s.NotifyGpu, s.SoundsOn, s.SoundPack, s.PlugSounds, s.Mode, s.ApplyPowerMode, s.ChargeLimitOn,
             s.QuietHoursOn, s.QuietFrom, s.QuietTo, s.AutoModeOnPower, s.AcMode, s.BatteryMode, s.AutoGamingMode, s.AutoEfficiencyOnBattery,
-            s.EfficiencyApps, s.WeeklyReportOn, s.WidgetOn, packs = Sounds.Packs
+            s.EfficiencyApps, s.WeeklyReportOn, s.WidgetOn, s.Theme, s.SmartLowAlert, s.ToastsOn, packs = Sounds.Packs
         };
     }
 
     private void SaveSettings(JsonNode p)
     {
         var s = monitor.Settings;
+        bool themeChanged = false;
         foreach (var (key, value) in p.AsObject())
         {
             if (value is null) continue;
@@ -319,9 +350,21 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
                 case "plugSounds": s.PlugSounds = value.GetValue<bool>(); break;
                 case "applyPowerMode": s.ApplyPowerMode = value.GetValue<bool>(); break;
                 case "chargeLimitOn": s.ChargeLimitOn = value.GetValue<bool>(); break;
+                case "smartLowAlert": s.SmartLowAlert = value.GetValue<bool>(); break;
+                case "toastsOn": s.ToastsOn = value.GetValue<bool>(); break;
+                case "theme":
+                    var theme = value.GetValue<string>();
+                    s.Theme = theme is "light" or "dark" ? theme : "system";
+                    themeChanged = true;
+                    break;
             }
         }
         s.Save();
+        if (themeChanged)
+        {
+            Emit("theme", new { theme = s.Theme });
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => ((App)System.Windows.Application.Current).ApplyTheme());
+        }
     }
 
     // ---------- assistant ----------
@@ -335,8 +378,9 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
             var s = monitor.Latest ?? BatteryReader.Read();
             double? watts = s is { OnAc: false, RateMw: < 0 } b ? -b.RateMw!.Value / 1000.0 : null;
             var apps = monitor.Apps.LastSample.Count > 0 ? monitor.Apps.LastSample : monitor.Apps.Sample(watts);
-            var ctx = AssistantContext.Build(monitor.Store, s, apps, monitor.Plug, monitor.Settings,
-                monitor.GpuHolders.Select(g => g.ProcessName).Distinct().ToList());
+            var ctx = AssistantContext.Build(monitor.Store, monitor.WithSmoothedRate(s), apps, monitor.Plug, monitor.Settings,
+                monitor.GpuHolders.Select(g => g.ProcessName).Distinct().ToList(),
+                heat: monitor.Heat, habit: monitor.Habit, pattern: monitor.PatternNow(s));
             var answer = _assistant.Ask(question, ctx);
             // Reveal the answer a few words at a time; it's already complete, this is only for readability.
             var words = System.Text.RegularExpressions.Regex.Split(answer.Text, @"(?<=\s)");
@@ -352,7 +396,7 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
                     await Task.Delay(14);
                 }
             }
-            Emit("chat", new { id, done = true, sources = answer.Sources, followUps = answer.FollowUps, topic = answer.Topic });
+            Emit("chat", new { id, done = true, sources = answer.Sources, followUps = answer.FollowUps, topic = answer.Topic, actions = answer.Actions });
         }
         catch (Exception e)
         {
@@ -400,7 +444,8 @@ public sealed class Bridge(GuardianMonitor monitor, Action<string> post, Func<st
     private object WeeklyReportNow()
     {
         var s = monitor.Latest ?? BatteryReader.Read();
-        var ctx = AssistantContext.Build(monitor.Store, s, monitor.Apps.LastSample, monitor.Plug, monitor.Settings);
+        var ctx = AssistantContext.Build(monitor.Store, monitor.WithSmoothedRate(s), monitor.Apps.LastSample, monitor.Plug, monitor.Settings,
+            heat: monitor.Heat, habit: monitor.Habit, pattern: monitor.PatternNow(s));
         var path = Core.Reports.WeeklyReport.Write(monitor.Store, ctx);
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         return Ok("Report saved and opened in your browser.");

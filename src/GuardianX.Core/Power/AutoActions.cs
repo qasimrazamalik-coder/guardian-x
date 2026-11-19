@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using GuardianX.Core.Gpu;
 
 namespace GuardianX.Core.Power;
 
@@ -62,5 +63,39 @@ public static class GameDetector
     {
         try { return SHQueryUserNotificationState(out var state) == 0 && state == RunningD3DFullScreen; }
         catch { return false; }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    /// <summary>Process id of the window in front, or 0.</summary>
+    public static int ForegroundProcessId()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return 0;
+            GetWindowThreadProcessId(hwnd, out var pid);
+            return (int)pid;
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// True when the app in front is holding the NVIDIA GPU: that catches borderless-window games the full-screen
+    /// check misses. Matches by process id, or by name for apps whose GPU work runs in a helper process.
+    /// </summary>
+    public static bool ForegroundOnGpu(IReadOnlyList<GpuHolder> holders)
+    {
+        if (holders.Count == 0) return false;
+        int pid = ForegroundProcessId();
+        if (pid <= 0 || pid == Environment.ProcessId) return false;
+        if (holders.Any(h => h.Pid == pid)) return true;
+        string name;
+        try { using var p = Process.GetProcessById(pid); name = p.ProcessName; } catch { return false; }
+        return holders.Any(h => string.Equals(h.ProcessName, name, StringComparison.OrdinalIgnoreCase));
     }
 }

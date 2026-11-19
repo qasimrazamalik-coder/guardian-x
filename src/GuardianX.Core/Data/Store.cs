@@ -6,7 +6,7 @@ namespace GuardianX.Core.Data;
 /// <summary>A stored battery sample (one a minute).</summary>
 public sealed record Sample(
     DateTimeOffset Time, double Percent, int RemainingMWh, int FullMWh, int DesignMWh, int Cycles,
-    int? RateMw, int? VoltageMv, double? TemperatureC, bool OnAc, bool Charging);
+    int? RateMw, int? VoltageMv, double? TemperatureC, bool OnAc, bool Charging, double? Heat = null);
 
 /// <summary>Something that happened: sleep, wake, charger in or out.</summary>
 public sealed record PowerEvent(DateTimeOffset Time, string Kind, double Percent);
@@ -176,6 +176,7 @@ public sealed class Store : IDisposable
         {
             fresh.Open();
             using (var c = fresh.CreateCommand()) { c.CommandText = "PRAGMA journal_mode=WAL;" + Schema; c.ExecuteNonQuery(); }
+            AddColumns(fresh);
             try
             {
                 using var old = new SqliteConnection($"Data Source={Path.Combine(work, name)};Pooling=False");
@@ -213,7 +214,9 @@ public sealed class Store : IDisposable
                     using var ins = fresh.CreateCommand();
                     ins.Transaction = tx;
                     var names = Enumerable.Range(1, r.FieldCount - 1).Select(i => "$p" + i).ToArray();
-                    ins.CommandText = $"INSERT OR IGNORE INTO {table} VALUES({string.Join(",", names)})";
+                    // Named columns: an older file may have fewer columns (no heat) than the fresh schema.
+                    var cols = Enumerable.Range(1, r.FieldCount - 1).Select(i => "\"" + r.GetName(i) + "\"");
+                    ins.CommandText = $"INSERT OR IGNORE INTO {table}({string.Join(",", cols)}) VALUES({string.Join(",", names)})";
                     for (int i = 1; i < r.FieldCount; i++) ins.Parameters.AddWithValue(names[i - 1], r.GetValue(i));
                     ins.ExecuteNonQuery();
                     copied++;
@@ -244,19 +247,39 @@ public sealed class Store : IDisposable
             CREATE INDEX IF NOT EXISTS gpu_ts ON gpu(ts);
             """;
 
+    /// <summary>Columns added after the first release. ADD COLUMN fails with "duplicate column" once it's there.</summary>
+    private static readonly string[] Migrations = { "ALTER TABLE samples ADD COLUMN heat REAL" };
+
+    private static void AddColumns(SqliteConnection db)
+    {
+        foreach (var sql in Migrations)
+        {
+            try
+            {
+                using var cmd = db.CreateCommand();
+                cmd.CommandText = sql;
+                cmd.ExecuteNonQuery();
+            }
+            catch (SqliteException e) when (e.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
+        }
+    }
+
     private void CreateSchema()
     {
         Exec(Schema);
+        AddColumns(_db);
         Exec("DROP TABLE IF EXISTS kb;"); // search index of the old Ollama assistant, no longer used
     }
 
-    public void Add(BatterySnapshot s)
+    /// <param name="heat">Heat score 0..100 at the time of the reading, if known.</param>
+    public void Add(BatterySnapshot s, double? heat = null)
     {
         lock (_lock)
         {
             using var cmd = _db.CreateCommand();
             cmd.CommandText = """
-                INSERT OR REPLACE INTO samples VALUES($ts,$pct,$rem,$full,$design,$cycles,$rate,$volt,$temp,$ac,$chg)
+                INSERT OR REPLACE INTO samples(ts,pct,remaining,full,design,cycles,rate,voltage,temp,on_ac,charging,heat)
+                VALUES($ts,$pct,$rem,$full,$design,$cycles,$rate,$volt,$temp,$ac,$chg,$heat)
                 """;
             cmd.Parameters.AddWithValue("$ts", s.Time.ToUnixTimeSeconds());
             cmd.Parameters.AddWithValue("$pct", s.Percent);
@@ -269,6 +292,7 @@ public sealed class Store : IDisposable
             cmd.Parameters.AddWithValue("$temp", (object?)s.TemperatureC ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$ac", s.OnAc ? 1 : 0);
             cmd.Parameters.AddWithValue("$chg", s.Charging ? 1 : 0);
+            cmd.Parameters.AddWithValue("$heat", heat is double h ? (object)Math.Round(h, 1) : DBNull.Value);
             cmd.ExecuteNonQuery();
         }
     }
@@ -304,7 +328,7 @@ public sealed class Store : IDisposable
         lock (_lock)
         {
             using var cmd = _db.CreateCommand();
-            cmd.CommandText = "SELECT * FROM samples WHERE ts >= $a AND ts < $b ORDER BY ts";
+            cmd.CommandText = "SELECT ts,pct,remaining,full,design,cycles,rate,voltage,temp,on_ac,charging,heat FROM samples WHERE ts >= $a AND ts < $b ORDER BY ts";
             cmd.Parameters.AddWithValue("$a", from.ToUnixTimeSeconds());
             cmd.Parameters.AddWithValue("$b", to.ToUnixTimeSeconds());
             using var r = cmd.ExecuteReader();
@@ -314,7 +338,8 @@ public sealed class Store : IDisposable
                     DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(0)).ToLocalTime(), r.GetDouble(1), r.GetInt32(2),
                     r.GetInt32(3), r.GetInt32(4), r.GetInt32(5),
                     r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetInt32(7),
-                    r.IsDBNull(8) ? null : r.GetDouble(8), r.GetInt32(9) == 1, r.GetInt32(10) == 1));
+                    r.IsDBNull(8) ? null : r.GetDouble(8), r.GetInt32(9) == 1, r.GetInt32(10) == 1,
+                    r.IsDBNull(11) ? null : r.GetDouble(11)));
             return list;
         }
     }
@@ -483,6 +508,24 @@ public sealed class Store : IDisposable
             if (s[i - 1].OnAc) ac[wd, t.Hour] += m; else dc[wd, t.Hour] += m;
         }
         return (ac, dc);
+    }
+
+    /// <summary>
+    /// The last time the charge went from under 15% to 99% or more (a full calibration cycle): the first full reading
+    /// after the latest low reading that was later followed by a full one. Null if that never happened.
+    /// </summary>
+    public DateTimeOffset? LastCalibrated()
+    {
+        lock (_lock)
+        {
+            using var cmd = _db.CreateCommand();
+            cmd.CommandText = """
+                SELECT MIN(ts) FROM samples WHERE pct >= 99 AND ts > (
+                  SELECT MAX(ts) FROM samples WHERE pct < 15 AND ts < (SELECT MAX(ts) FROM samples WHERE pct >= 99))
+                """;
+            var v = cmd.ExecuteScalar();
+            return v is null or DBNull ? null : DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(v)).ToLocalTime();
+        }
     }
 
     public int SampleCount()

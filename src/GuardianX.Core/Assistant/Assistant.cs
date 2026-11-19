@@ -13,7 +13,18 @@ public sealed record Chunk(string Id, string Source, string Title, string Text);
 public sealed record Hit(Chunk Chunk, double Score);
 
 /// <summary>An answer from the local assistant: text, where it came from, and questions worth asking next.</summary>
-public sealed record AssistantAnswer(string Text, IReadOnlyList<string> Sources, IReadOnlyList<string> FollowUps, string Topic);
+public sealed record AssistantAnswer(string Text, IReadOnlyList<string> Sources, IReadOnlyList<string> FollowUps, string Topic)
+{
+    /// <summary>Buttons shown under the answer.</summary>
+    public IReadOnlyList<AnswerAction> Actions { get; init; } = Array.Empty<AnswerAction>();
+}
+
+/// <summary>A button under an answer: either a bridge method call (with params) or a page to open.</summary>
+public sealed record AnswerAction(
+    string Label,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Method = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Params = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Navigate = null);
 
 /// <summary>The built-in knowledge (battery science, OMEN options, Guardian X features, Windows tips) split into sections.</summary>
 public static class Knowledge
@@ -171,9 +182,14 @@ public sealed class AssistantContext
     public PlugState? Plug { get; init; }
     public Settings Settings { get; init; } = new();
     public Func<StorageReport>? Storage { get; init; }
+    public HeatReading? Heat { get; init; }
+    public HabitReport? Habit { get; init; }
+    public UsagePattern? Pattern { get; init; }
 
+    /// <param name="s">The reading to answer from; pass it with the smoothed rate so times match the rest of the app.</param>
     public static AssistantContext Build(Store store, BatterySnapshot? s, IReadOnlyList<AppUsage>? apps, PlugState? plug,
-        Settings settings, IReadOnlyList<string>? gpuNow = null, Func<StorageReport>? storage = null)
+        Settings settings, IReadOnlyList<string>? gpuNow = null, Func<StorageReport>? storage = null,
+        HeatReading? heat = null, HabitReport? habit = null, UsagePattern? pattern = null)
     {
         var now = DateTimeOffset.Now;
         var daily = store.DailyCapacity(400);
@@ -200,6 +216,9 @@ public sealed class AssistantContext
             Plug = plug,
             Settings = settings,
             Storage = storage ?? AppMonitor.Storage,
+            Heat = heat ?? (s?.TemperatureC is double bt ? HeatSensor.Assess(null, bt, 0, gpuNow is { Count: > 0 }, null) : null),
+            Habit = habit ?? SmartInsights.Habit(store.Samples(now.AddDays(-14), now.AddMinutes(1)), now),
+            Pattern = pattern ?? SmartInsights.Pattern(store.Events(now.AddDays(-21)), s, s?.RateMw, settings.ChargeLimitOn ? mode.ChargeLimit : 100, now),
         };
     }
 }
@@ -231,49 +250,61 @@ public sealed class LocalAssistant
         new Topic("greeting", new[] { "hi", "hello", "hey", "salam", "assalam", "help", "what can you", "who are you" },
             Array.Empty<string>(), Greeting,
             new[] { "How is my battery doing?", "Why shouldn't I keep it plugged in?", "Which apps are draining my battery?" }),
-        new Topic("status", new[] { "now", "current", "percent", "left", "remain", "runtime", "how long", "last", "status", "level", "charge level", "time to full", "full by" },
+        new Topic("status", new[] { "now", "current", "percent", "left", "remain", "runtime", "how long", "last", "status", "level", "charge level", "time to full", "full by",
+                     "kitni der", "kitna time", "kab tak", "kitni battery", "kitne percent", "baqi", "bachi" },
             new[] { "battery status charge" }, Status,
             new[] { "When will my battery reach 80% health?", "Which apps are draining my battery?", "What mode should I use?" }),
-        new Topic("plugged", new[] { "plug", "plugged", "charger", "100%", "charge overnight", "charging overnight", "keep", "always", "all the time", "unplug", "charging habit", "charge to", "bad to charge" },
+        new Topic("plugged", new[] { "plug", "plugged", "charger", "100%", "charge overnight", "charging overnight", "keep", "always", "all the time", "unplug", "charging habit", "charge to", "bad to charge",
+                     "lagaye rakhna", "lagaye rakhun", "laga rehne", "laga ke rakhna", "laga kar rakhna", "charger lagaye", "charger nikal", "nikalna", "poori raat" },
             new[] { "keeping laptop plugged in 100% charge ageing", "charge limit 80" }, Plugged,
             new[] { "How do I set up the 80% limit with a Tapo plug?", "What caused my biggest battery drop?", "When will my battery reach 80% health?" }),
-        new Topic("plugsetup", new[] { "tapo", "shelly", "smart plug", "p100", "p110", "set up", "setup", "limit", "80% limit", "stop charging", "cut" },
+        new Topic("plugsetup", new[] { "tapo", "shelly", "smart plug", "p100", "p110", "set up", "setup", "limit", "80% limit", "stop charging", "cut",
+                     "kaise lagaun", "smart plug kaise", "charging rok" },
             new[] { "smart plug charge limit tapo shelly setup" }, PlugSetup,
             new[] { "Why shouldn't I keep it plugged in?", "What mode should I use?", "How is my battery doing?" }),
-        new Topic("health", new[] { "health", "wear", "worn", "capacity", "degrade", "cycle", "cycles", "trend", "doing", "condition", "old", "good", "bad" },
+        new Topic("health", new[] { "health", "wear", "worn", "capacity", "degrade", "cycle", "cycles", "trend", "doing", "condition", "old", "good", "bad",
+                     "sehat", "haalat", "halat", "kharab", "kaisi hai battery" },
             new[] { "battery health wear cycles capacity" }, Health,
             new[] { "What caused my biggest battery drop?", "When will my battery reach 80% health?", "How can I make my battery last longer?" }),
         new Topic("drop", new[] { "drop", "dropped", "caused", "cause", "sudden", "fell", "why did", "lost" },
             new[] { "what ages a lithium battery heat high charge" }, Drop,
             new[] { "Why shouldn't I keep it plugged in?", "When will my battery reach 80% health?", "How hot does my battery get?" }),
-        new Topic("forecast", new[] { "when", "forecast", "predict", "future", "replace", "replacement", "80% health", "how long will", "years", "months", "reach" },
+        new Topic("forecast", new[] { "when", "forecast", "predict", "future", "replace", "replacement", "80% health", "how long will", "years", "months", "reach",
+                     "badalni", "badalna", "kitne saal", "kab badal" },
             new[] { "battery health wear replacement" }, Forecast,
             new[] { "How can I make my battery last longer?", "Why shouldn't I keep it plugged in?", "What caused my biggest battery drop?" }),
-        new Topic("apps", new[] { "app", "apps", "drain", "draining", "using", "ram", "memory", "cpu", "heavy", "slow", "process", "browser", "chrome", "edge", "which", "eating" },
+        new Topic("apps", new[] { "app", "apps", "drain", "draining", "using", "ram", "memory", "cpu", "heavy", "slow", "process", "browser", "chrome", "edge", "which", "eating",
+                     "kaun si app", "kon si app", "konsi app", "kaunsi app", "jaldi khatam", "khatam hoti", "khatam", "jaldi", "khati", "kha rahi" },
             new[] { "apps battery ram cpu browser efficiency mode" }, Apps,
             new[] { "How can I make my battery last longer?", "Is the NVIDIA GPU awake?", "How much storage do I have?" }),
-        new Topic("storage", new[] { "storage", "disk", "space", "drive", "full", "clean", "cleanup", "temp", "big files", "large files", "free up", "ssd" },
+        new Topic("storage", new[] { "storage", "disk", "space", "drive", "full", "clean", "cleanup", "temp", "big files", "large files", "free up", "ssd",
+                     "storage kitni", "jagah", "khali" },
             new[] { "storage temp files cleanup disk" }, Storage,
             new[] { "Which apps start with Windows?", "Which apps are draining my battery?", "How is my battery doing?" }),
         new Topic("startup", new[] { "startup", "start with windows", "boot", "autostart", "background apps" },
             new[] { "startup apps windows battery" }, Startup,
             new[] { "How much storage do I have?", "Which apps are draining my battery?" }),
-        new Topic("sleep", new[] { "sleep", "standby", "lid", "suspend", "overnight", "closed", "hibernate" },
+        new Topic("sleep", new[] { "sleep", "standby", "lid", "suspend", "overnight", "closed", "hibernate", "lid band", "band kar", "raat ko", "raat bhar" },
             new[] { "sleep drain modern standby hibernate" }, Sleep,
             new[] { "Is the NVIDIA GPU awake?", "How can I make my battery last longer?" }),
-        new Topic("gpu", new[] { "gpu", "nvidia", "rtx", "graphics", "dgpu", "discrete", "5060" },
+        new Topic("gpu", new[] { "gpu", "nvidia", "rtx", "graphics", "dgpu", "discrete", "5060", "graphics card" },
             new[] { "nvidia gpu battery optimus" }, Gpu,
             new[] { "Which apps are draining my battery?", "What mode should I use?" }),
-        new Topic("heat", new[] { "hot", "heat", "temperature", "warm", "thermal", "fan", "cool", "cooling" },
+        new Topic("heat", new[] { "hot", "heat", "temperature", "warm", "thermal", "fan", "cool", "cooling", "garam", "garm", "garmi", "thanda", "tapish" },
             new[] { "heat temperature battery ageing cooling" }, Heat,
             new[] { "What mode should I use?", "Why shouldn't I keep it plugged in?" }),
-        new Topic("modes", new[] { "mode", "modes", "gaming", "travel", "saver", "desk", "which mode", "profile", "performance", "efficiency" },
+        new Topic("modes", new[] { "mode", "modes", "gaming", "travel", "saver", "desk", "which mode", "profile", "performance", "efficiency",
+                     "mode konsa", "konsa mode", "kaun sa mode", "kon sa mode", "kaunsa mode" },
             new[] { "modes desk gaming travel saver" }, ModesAnswer,
             new[] { "How do I set up the 80% limit with a Tapo plug?", "How can I make my battery last longer?" }),
-        new Topic("alerts", new[] { "alert", "alerts", "notification", "notify", "sound", "sounds", "20%", "80%", "beep", "quiet" },
+        new Topic("alerts", new[] { "alert", "alerts", "notification", "notify", "sound", "sounds", "20%", "80%", "beep", "quiet", "awaz", "awaaz" },
             new[] { "alerts sounds notifications" }, Alerts,
             new[] { "What mode should I use?", "How is my battery doing?" }),
-        new Topic("tips", new[] { "last longer", "longer", "save", "saving", "improve", "extend", "tips", "better battery", "preserve", "protect", "optimi" },
+        new Topic("habit", new[] { "habit", "habits", "habit score", "charging score", "score", "grade", "aadat", "aadatein", "aadaten" },
+            new[] { "charging habits battery ageing 100% heat" }, HabitAnswer,
+            new[] { "Why shouldn't I keep it plugged in?", "How hot does my battery get?", "How can I make my battery last longer?" }),
+        new Topic("tips", new[] { "last longer", "longer", "save", "saving", "improve", "extend", "tips", "better battery", "preserve", "protect", "optimi",
+                     "zyada chale", "zyada der", "lambi chale", "behtar", "bachat", "bachane", "bachaun", "tareeqa", "tarika" },
             new[] { "battery life tips windows power efficiency" }, Tips,
             new[] { "Which apps are draining my battery?", "Why shouldn't I keep it plugged in?", "What mode should I use?" }),
     };
@@ -346,7 +377,43 @@ public sealed class LocalAssistant
             sb.Append("Why: ").Append(Knowledge.Gist(support.Chunk, 2));
             sources.Add(support.Chunk.Title);
         }
-        return new AssistantAnswer(sb.ToString(), sources, topic.FollowUps.Where(f => !Same(f, question)).Take(3).ToList(), topic.Id);
+        return new AssistantAnswer(sb.ToString(), sources, topic.FollowUps.Where(f => !Same(f, question)).Take(3).ToList(), topic.Id)
+        {
+            Actions = ActionsFor(topic.Id, ctx),
+        };
+    }
+
+    private static readonly AnswerAction OpenCharging = new("Open Charging", Navigate: "charging");
+    private static readonly AnswerAction OpenApps = new("Open Apps", Navigate: "apps");
+
+    /// <summary>Buttons that do what the answer suggests.</summary>
+    internal static IReadOnlyList<AnswerAction> ActionsFor(string topic, AssistantContext c)
+    {
+        var saver = new AnswerAction("Switch to Saver mode", "setMode", new Dictionary<string, string> { ["id"] = "saver" });
+        var list = new List<AnswerAction>();
+        switch (topic)
+        {
+            case "tips":
+            case "modes":
+                if (c.Mode.Id != "saver") list.Add(saver);
+                break;
+            case "heat":
+                if (c.Heat is { Level: not "cool" } && c.Mode.Id != "saver") list.Add(saver);
+                break;
+            case "plugsetup":
+            case "plugged":
+            case "habit":
+                list.Add(OpenCharging);
+                break;
+            case "apps":
+                list.Add(OpenApps);
+                break;
+            case "storage":
+            case "startup":
+                list.Add(new AnswerAction("Open Apps & storage", Navigate: "apps"));
+                break;
+        }
+        return list;
     }
 
     private static bool Same(string a, string b) => string.Equals(a.Trim('?', ' '), b.Trim('?', ' '), StringComparison.OrdinalIgnoreCase);
@@ -380,6 +447,7 @@ public sealed class LocalAssistant
         if (f?.HoursToFull is double full) sb.AppendLine($"About {H(full)} to full (the last 20% charges more slowly).");
         sb.AppendLine($"Battery health is {Pct(c.Wear!.HealthPercent)} after {s.Cycles} cycles. Mode: {c.Mode.Name} ({c.Mode.ResumeAt}–{c.Mode.ChargeLimit}%).");
         if (c.HoldMinutes >= 30) sb.AppendLine($"It has sat at 100% on the charger for {BatteryInsights.FormatMinutes(c.HoldMinutes)}. Unplugging for a while would help.");
+        if (c.Pattern?.Message is string pm) sb.AppendLine(pm);
         return new(sb.ToString());
     }
 
@@ -392,6 +460,10 @@ public sealed class LocalAssistant
             sb.AppendLine($"\nYour laptop has been switched on and plugged in about {ch:0.0} hours a day over the last week (Windows' records).");
         if (BatteryInsights.BiggestDrop(c.Daily) is { } d)
             sb.AppendLine($"Your biggest capacity drop was {Pct(d.Lost)} between {d.From.ToString("d MMM", En)} and {d.To.ToString("d MMM", En)}.");
+        if (c.Habit?.Factors.FirstOrDefault(f => f.Name == "Full on the charger") is { Impact: > 0 } full)
+            sb.AppendLine($"This week: {full.Detail} That costs {full.Impact} points of your charging-habit score ({c.Habit!.Score}/100).");
+        if (c.Pattern?.ReadyBy is { } rb)
+            sb.AppendLine($"You usually unplug around {rb.Time}; at the current rate it'll be at about {rb.Percent:0}% by then.");
         sb.AppendLine("\nWhat helps most:");
         sb.AppendLine(c.Plug is { Configured: true }
             ? $"1. Keep the charge limit on. Your plug ({c.Plug.Name}) cuts power at {c.Mode.ChargeLimit}% and resumes at {c.Mode.ResumeAt}%."
@@ -555,15 +627,24 @@ public sealed class LocalAssistant
     private static Composed Heat(AssistantContext c, string q)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(c.Battery?.TemperatureC is double t
-            ? $"The battery is at {t:0.0} °C right now ({(t >= 40 ? "hot" : t >= 35 ? "warm" : "fine")})."
-            : "This battery doesn't report its temperature to Windows, so I can't measure it directly.");
+        var h = c.Heat;
+        if (h is { TempC: double zt })
+            sb.AppendLine($"It's {zt:0.0} °C right now ({h.Level}), measured by {(h.Source == "thermal-zone" ? "Windows' thermal sensor" : "the battery's own sensor")}.");
+        else if (h is not null)
+            sb.AppendLine($"No temperature sensor is readable, so I estimate the heat load instead: {h.Score}/100 ({h.Level}), from {h.CpuPercent:0}% CPU" +
+                          (h.GpuBusy ? ", the NVIDIA GPU busy" : "") + (h.ChargingW is double cw ? $" and {cw:0} W of charging" : "") + ".");
+        else
+            sb.AppendLine(c.Battery?.TemperatureC is double t
+                ? $"The battery is at {t:0.0} °C right now ({(t >= 48 ? "hot" : t >= 40 ? "warm" : "fine")})."
+                : "This battery doesn't report its temperature to Windows, so I can't measure it directly.");
+        if (c.Habit?.Factors.FirstOrDefault(f => f.Name == "Heat") is { Impact: > 0 } hf)
+            sb.AppendLine($"This week: {hf.Detail}");
         if (c.Today is { TemperatureKnown: true } today) sb.AppendLine($"Today it spent {today.HoursHot:0.0} h above 40 °C.");
         sb.AppendLine("\nHeat ages a battery as much as sitting at 100%, and the two together are the worst case. To keep it cooler:");
         sb.AppendLine("• Use it on a hard surface with the vents clear, and clean the fans every few months.");
         sb.AppendLine("• Use Balanced or Efficiency power mode when you aren't gaming (Desk or Saver mode).");
         sb.AppendLine("• When gaming plugged in, keep the charge under 80% so heat and full charge don't stack.");
-        return new(sb.ToString(), c.Battery?.TemperatureC is not null);
+        return new(sb.ToString(), c.Heat is not null || c.Battery?.TemperatureC is not null);
     }
 
     private static Composed ModesAnswer(AssistantContext c, string q)
@@ -599,6 +680,35 @@ public sealed class LocalAssistant
         return new(sb.ToString());
     }
 
+    private static Composed HabitAnswer(AssistantContext c, string q)
+    {
+        if (c.Habit is not { } h) return new("I need a few days of readings before I can score your charging habits.", false);
+        var sb = new StringBuilder();
+        string change = h.Change switch
+        {
+            int x when x > 0 => $", up {x} from the week before",
+            int x when x < 0 => $", down {-x} from the week before",
+            0 => ", the same as the week before",
+            _ => "",
+        };
+        sb.AppendLine($"Your charging-habit score is {h.Score}/100 (grade {h.Grade}) for the last 7 days{change}. Higher is kinder to the battery.");
+        var lost = h.Factors.Where(f => f.Impact > 0).OrderByDescending(f => f.Impact).ToList();
+        if (lost.Count == 0) sb.AppendLine("Nothing is costing points: no long spells at 100% on the charger, no deep discharges and no hot spells.");
+        else
+        {
+            sb.AppendLine("\nWhere the points went:");
+            foreach (var f in lost) sb.AppendLine($"• {f.Name}: −{f.Impact}. {f.Detail}");
+            sb.AppendLine("\n" + (lost[0].Name switch
+            {
+                "Full on the charger" => "Biggest win: don't let it sit at 100%. The 80% limit with a smart plug (Charging page) fixes this automatically.",
+                "Heat" => "Biggest win: keep it cooler. Use Desk or Saver mode when you aren't gaming and keep the vents clear.",
+                "Low charge" => "Biggest win: plug in before it drops under 15%. The low-battery alert can remind you (Settings > Alerts).",
+                _ => "Biggest win: avoid running it below 10%. Plug in at around 20%.",
+            }));
+        }
+        return new(sb.ToString());
+    }
+
     private static Composed Tips(AssistantContext c, string q)
     {
         var sb = new StringBuilder();
@@ -612,6 +722,7 @@ public sealed class LocalAssistant
         sb.AppendLine($"{n++}. Keep the charge between 40% and 80% day to day, and charge to 100% only before you need it.");
         sb.AppendLine($"{n++}. Keep it cool: hard surface, clear vents.");
         if (c.ChargerHoursPerDay is double ch && ch >= 12) sb.AppendLine($"{n++}. It's on the charger about {ch:0} h a day. A smart plug with the 80% limit would protect it the most.");
+        if (c.Habit is { } hb) sb.AppendLine($"\nYour charging-habit score is {hb.Score}/100 (grade {hb.Grade}). Ask \"what's my habit score?\" for what's costing points.");
         return new(sb.ToString());
     }
 }
