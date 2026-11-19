@@ -53,3 +53,8 @@ The assistant also understands Roman Urdu ("battery jaldi kyun khatam hoti hai",
 
 ## push events
 `update`, `alert`, `navigate`, `theme`, `chat`, `setup`, `updateStatus` (unchanged meanings).
+
+## Decisions made while building
+
+- **App targets `net8.0-windows10.0.19041.0`.** CommunityToolkit.WinUI.Notifications 7.1.2 (the newest release) ships `ToastNotificationManagerCompat` only in its `net5.0-windows10.0.18362` build; a lower target silently falls back to a build without it. Cost: Guardian X needs Windows 10 2004 or newer (it already needed Windows 10+ for WebView2 and EcoQoS). Core, MCP and tests stay on `net8.0-windows`.
+- **The system thermal zone has its own heat bands.** On the Omen the only readable zone (`_tz.tz01`) sits near the CPU and reads ~54 °C at idle. Battery bands (40/48 °C) would mark it hot all day and count it as hot hours in the habit score. Zone bands are cool < 60, warm < 75, hot ≥ 75 °C, and the zone value is mapped linearly from 60–75 onto 40–48 before scoring, so `score` and hot hours mean the same for both sensors. These bands are general laptop guidance, not calibrated on this machine under load.
