@@ -73,7 +73,7 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
               <div className="ref" style={{ left: `${(typical / wearMax) * 100}%` }} />
             </div>
           )}
-          <div className="small muted" style={{ marginTop: 6 }}>The black mark is a typical battery (about {typical}%). {(b.wearPer100 ?? 0) > typical * 2 ? 'Yours is ageing faster than its use explains.' : 'You are in a healthy range.'}</div>
+          <div className="small muted" style={{ marginTop: 6 }}>The tick mark is a typical battery (about {typical}%). {(b.wearPer100 ?? 0) > typical * 2 ? 'Yours is ageing faster than its use explains.' : 'You are in a healthy range.'}</div>
         </div>
         <div className="row small muted" style={{ marginTop: 12, gap: 8, alignItems: 'flex-start' }}>
           <Clock3 size={14} aria-hidden style={{ flex: 'none', marginTop: 3 }} />
@@ -117,7 +117,8 @@ export function Overview({ d, go }: { d: Dashboard; go: (p: string) => void }) {
           <div className="big" style={{ color: `var(--${levelTone(heat.level)})` }}>
             {heat.tempC != null ? <>{fmt(heat.tempC)}<span className="unit">°C</span></> : <>{heat.score}<span className="unit">/ 100 load</span></>}
           </div>
-          <div style={{ marginTop: 12 }}><ScaleBar value={heat.score} color={`var(--${levelTone(heat.level)})`} label={`Heat load ${heat.score} of 100`} /></div>
+          {heat.tempC != null && <div className="small muted" style={{ marginTop: 10 }}>Heat score {heat.score} / 100 (65 or more is hot)</div>}
+          <div style={{ marginTop: heat.tempC != null ? 4 : 12 }}><ScaleBar value={heat.score} color={`var(--${levelTone(heat.level)})`} label={`Heat score ${heat.score} of 100`} /></div>
           <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
             <span className="tag plain">CPU {Math.round(heat.cpuPercent)}%</span>
             <span className="tag plain">GPU {heat.gpuBusy ? 'busy' : 'idle'}</span>
